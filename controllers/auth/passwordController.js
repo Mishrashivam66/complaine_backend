@@ -48,7 +48,7 @@ const forgotPassword = async (req, res) => {
     // RESET URL
     // ==========================================
 
-    const resetURL = `http://localhost:5173/reset-password/${resetToken}`;
+    const resetURL = `https://university-complain-frontend.vercel.app/register/reset-password/${resetToken}`;
 
     // ==========================================
     // EMAIL MESSAGE
