@@ -1,124 +1,319 @@
 const express = require("express");
+
 const cors = require("cors");
-require("dotenv").config();
+
+const dotenv = require("dotenv");
 
 const http = require("http");
 
-const { initSocket } =
-require("./sockets/socket");
+// ==========================================
+// SOCKET
+// ==========================================
 
-const connectDB =
-require("./config/db");
+const { initSocket } = require("./sockets/socket");
 
-const authRoutes =
-require("./routes/authRoutes");
+// ==========================================
+// DATABASE
+// ==========================================
 
-const complaintRoutes =
-require("./routes/complaintRoutes");
+const connectDB = require("./config/db");
 
-const departmentRoutes =
-require("./routes/departmentRoutes");
+// ==========================================
+// ENV CONFIG
+// ==========================================
 
-const categoryRoutes =
-require("./routes/categoryRoutes");
+dotenv.config();
 
-const jobCardRoutes =
-require("./routes/jobCardRoutes");
+// ==========================================
+// CONNECT DATABASE
+// ==========================================
 
-const materialRequestRoutes =
-require("./routes/materialRequestRoutes");
-
-const inventoryRoutes =
-require("./routes/inventoryRoutes");
-
-const reportRoutes =
-require("./routes/reportRoutes");
-
-const invoiceRoutes =
-require("./routes/invoiceRoutes");
-
-const notificationRoutes =
-require("./routes/notificationRoutes");
-
-
-// Connect DB
 connectDB();
+
+// ==========================================
+// APP
+// ==========================================
 
 const app = express();
 
+// ==========================================
+// MIDDLEWARE
+// ==========================================
+
+app.use(
+  cors({
+    origin: "*",
+
+    credentials: true,
+  }),
+);
+
 app.use(express.json());
-app.use(cors());
-
-app.get("/", (req, res) => {
-  res.send(
-    "Smart Campus ERP Backend Running 🚀"
-  );
-});
-
-app.use("/api/auth", authRoutes);
 
 app.use(
-  "/api/complaints",
-  complaintRoutes
+  express.urlencoded({
+    extended: true,
+  }),
 );
 
-app.use(
-  "/api/departments",
-  departmentRoutes
-);
+// ==========================================
+// COMMON NOTIFICATION ROUTES
+// ==========================================
 
-app.use(
-  "/api/categories",
-  categoryRoutes
-);
+// COMPLAINTS
 
-app.use(
-  "/api/jobcards",
-  jobCardRoutes
-);
+const complaintRoutes = require("./routes/admin/complaintRoutes");
 
-app.use(
-  "/api/material-requests",
-  materialRequestRoutes
-);
-
-app.use(
-  "/api/inventory",
-  inventoryRoutes
-);
-
-app.use(
-  "/api/reports",
-  reportRoutes
-);
-
-app.use(
-  "/api/invoices",
-  invoiceRoutes
-);
+const notificationRoutes = require("./routes/notificationRoutes");
 
 app.use(
   "/api/notifications",
-  notificationRoutes
+
+  notificationRoutes,
 );
-// Create HTTP Server
-const server =
-http.createServer(app);
+
+// ==========================================
+// ROUTES IMPORT
+// ==========================================
+
+// AUTH
+
+const authRoutes = require("./routes/auth/authRoutes");
+
+// ADMIN
+
+const adminRoutes = require("./routes/admin/adminRoutes");
+
+const hostelAdminRoutes = require("./routes/admin/hostelRoutes");
+
+const wardenAdminRoutes = require("./routes/admin/wardenRoutes");
+
+const announcementRoutes = require("./routes/admin/announcementRoutes");
+const reportRoutes = require("./routes/admin/reportRoutes");
+const inventoryRoutes = require("./routes/admin/inventoryRoutes");
+const auditLogRoutes = require("./routes/admin/auditLogRoutes");
+const dashboardRoutes = require("./routes/admin/dashboardRoutes");
+const rolePermissionRoutes = require("./routes/admin/rolePermissionRoutes");
+const messAnalyticsRoutes = require("./routes/mess/messAnalyticsRoutes");
+
+// STUDENT
+
+const studentRoutes = require("./routes/student/studentRoutes");
+
+const profileRoutes = require("./routes/student/profileRoutes");
+
+const hostelRoutes = require("./routes/student/hostelRoutes");
+
+const studentNoticeRoutes = require("./routes/student/noticeRoutes");
+// STUDENT MESS
+
+const messRoutes = require("./routes/student/messRoutes");
+
+// WARDEN
+
+const wardenRoutes = require("./routes/warden/wardenRoutes");
+
+const roomAllocationRoutes = require("./routes/warden/roomAllocationRoutes");
+
+// MAINTENANCE
+
+const messMenuRoutes = require("./routes/mess/messMenuRoutes");
+
+const maintenanceRoutes = require("./routes/maintenance/maintenanceRoutes");
+
+// STORE
+
+const storeRoutes = require("./routes/store/storeRoutes");
 
 
-// Initialize Socket
+// COMMON
+
+const commonRoutes = require("./routes/common/commonRoutes");
+
+// ==========================================
+// API ROUTES
+// ==========================================
+
+// AUTH
+
+app.use(
+  "/api/auth",
+
+  authRoutes,
+);
+
+// ==========================================
+// ADMIN
+// ==========================================
+
+app.use(
+  "/api/admin",
+
+  adminRoutes,
+);
+
+app.use(
+  "/api/admin/hostels",
+
+  hostelAdminRoutes,
+);
+
+app.use(
+  "/api/admin/wardens",
+
+  wardenAdminRoutes,
+);
+
+app.use("/api/announcements", announcementRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/complaints", complaintRoutes);
+
+app.use("/api/inventory", inventoryRoutes);
+
+app.use("/api/audit-logs", auditLogRoutes);
+app.use("/api/roles", rolePermissionRoutes);
+
+app.use("/api/dashboard", dashboardRoutes);
+
+app.use(
+  "/api/mess/menu",
+
+  messMenuRoutes,
+);
+app.use("/api/mess/analytics", messAnalyticsRoutes);
+
+// ==========================================
+// STUDENT
+// ==========================================
+
+app.use(
+  "/api/student",
+
+  studentRoutes,
+);
+
+app.use(
+  "/api/student/profile",
+
+  profileRoutes,
+);
+
+app.use(
+  "/api/student/hostel",
+
+  hostelRoutes,
+);
+
+app.use(
+  "/api/student/notices",
+
+  studentNoticeRoutes,
+);
+
+app.use(
+  "/api/student/mess",
+
+  messRoutes,
+);
+
+// ==========================================
+// WARDEN
+// ==========================================
+
+app.use(
+  "/api/warden",
+
+  wardenRoutes,
+);
+
+app.use(
+  "/api/warden/rooms",
+
+  roomAllocationRoutes,
+);
+
+// ==========================================
+// MAINTENANCE
+// ==========================================
+
+app.use(
+  "/api/maintenance",
+
+  maintenanceRoutes,
+);
+
+// ==========================================
+// STORE
+// ==========================================
+
+app.use(
+  "/api/store",
+
+  storeRoutes,
+);
+
+// ==========================================
+// COMMON
+// ==========================================
+
+app.use(
+  "/api/common",
+
+  commonRoutes,
+);
+
+// ==========================================
+// TEST ROUTE
+// ==========================================
+
+app.get(
+  "/",
+
+  (req, res) => {
+    res.send("SMART CAMPUS ERP BACKEND RUNNING");
+  },
+);
+
+// ==========================================
+// ERROR HANDLER
+// ==========================================
+
+app.use((err, req, res, next) => {
+  console.log(err.stack);
+
+  res.status(500).json({
+    success: false,
+
+    message: err.message || "Server Error",
+  });
+});
+
+// ==========================================
+// HTTP SERVER
+// ==========================================
+
+const server = http.createServer(app);
+
+// ==========================================
+// INITIALIZE SOCKET
+// ==========================================
+
 initSocket(server);
 
+// ==========================================
+// PORT
+// ==========================================
 
-const PORT =
-process.env.PORT || 5000;
+const PORT = process.env.PORT || 5000;
 
+// ==========================================
+// START SERVER
+// ==========================================
 
-// Start Server
-server.listen(PORT, () => {
+server.listen(
+  PORT,
 
-  console.log(
-    `Server running on port ${PORT}`
-  );
-
-});
+  () => {
+    console.log(`Server running on port ${PORT}`);
+  },
+);

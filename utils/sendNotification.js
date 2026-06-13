@@ -1,47 +1,82 @@
-const Notification =
-require("../models/Notification");
+const Notification = require("../models/Notification");
 
-const { getIO } =
-require("../sockets/socket");
+const { getIO } = require("../sockets/socket");
 
-const sendNotification =
-async ({
-user,
-title,
-message,
-type
+// ==========================================
+// SEND NOTIFICATION
+// ==========================================
+
+const sendNotification = async ({
+  receiver,
+  sender = null,
+  title,
+  message,
+  type = "GENERAL",
+  relatedComplaint = null,
 }) => {
+  try {
+    // ==========================================
+    // VALIDATION
+    // ==========================================
 
-const notification =
-await Notification.create({
+    if (!receiver) {
+      console.log("Notification receiver missing");
 
-user,
-title,
-message,
-type
+      return;
+    }
 
-});
+    // ==========================================
+    // SAVE NOTIFICATION
+    // ==========================================
 
-try {
+    const notification = await Notification.create({
+      receiver,
 
-const io = getIO();
+      sender,
 
-io.emit(
-"new_notification",
-notification
-);
+      title,
 
-} catch(error) {
+      message,
 
-console.log(
-"Socket not initialized"
-);
+      type,
 
-}
+      relatedComplaint,
 
-return notification;
+      isRead: false,
+    });
 
+    // ==========================================
+    // POPULATE SENDER
+    // ==========================================
+
+    await notification.populate(
+      "sender",
+
+      "name role profilePhoto",
+    );
+
+    // ==========================================
+    // SOCKET EMIT
+    // ==========================================
+
+    try {
+      const io = getIO();
+
+      io.to(receiver.toString()).emit(
+        "newNotification",
+
+        notification,
+      );
+
+      console.log("Notification Sent Successfully");
+    } catch (socketError) {
+      console.log("Socket Error:", socketError.message);
+    }
+
+    return notification;
+  } catch (error) {
+    console.log("Notification Error:", error.message);
+  }
 };
 
-module.exports =
-sendNotification;
+module.exports = sendNotification;

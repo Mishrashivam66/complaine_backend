@@ -1,30 +1,107 @@
 const mongoose = require("mongoose");
 
-const categorySchema =
-new mongoose.Schema({
+// ==========================================
+// CATEGORY SCHEMA
+// ==========================================
 
-  name:{
-    type:String,
-    required:true,
-    unique:true
+const categorySchema = new mongoose.Schema(
+  {
+    // ==========================================
+    // CATEGORY NAME
+    // ==========================================
+
+    categoryName: {
+      type: String,
+
+      required: true,
+
+      trim: true,
+
+      unique: true,
+    },
+
+    // ==========================================
+    // DEPARTMENT
+    // ==========================================
+
+    department: {
+      type: String,
+
+      enum: ["MAINTENANCE", "HOSTEL", "SECURITY", "MESS", "IT", "ADMIN"],
+
+      default: "MAINTENANCE",
+    },
+
+    // ==========================================
+    // PRIORITY
+    // ==========================================
+
+    priority: {
+      type: String,
+
+      enum: ["LOW", "MEDIUM", "HIGH"],
+
+      default: "MEDIUM",
+    },
+
+    // ==========================================
+    // ICON
+    // ==========================================
+
+    icon: {
+      type: String,
+
+      default: "Wrench",
+    },
+
+    // ==========================================
+    // DESCRIPTION
+    // ==========================================
+
+    description: {
+      type: String,
+
+      default: "",
+    },
+
+    // ==========================================
+    // SUB CATEGORIES
+    // ==========================================
+
+    subCategories: [
+      {
+        type: String,
+      },
+    ],
+
+    // ==========================================
+    // STATUS
+    // ==========================================
+
+    isActive: {
+      type: Boolean,
+
+      default: true,
+    },
+
+    // ==========================================
+    // TOTAL COMPLAINTS
+    // ==========================================
+
+    totalComplaints: {
+      type: Number,
+
+      default: 0,
+    },
   },
 
-  department:{
-    type:mongoose.Schema.Types.ObjectId,
-    ref:"Department"
+  {
+    timestamps: true,
   },
-
-  isActive:{
-    type:Boolean,
-    default:true
-  }
-
-},{
-  timestamps:true
-});
-
-module.exports =
-mongoose.model(
-  "Category",
-  categorySchema
 );
+
+// ==========================================
+// EXPORT
+// ==========================================
+
+module.exports = mongoose.model("Category", categorySchema);

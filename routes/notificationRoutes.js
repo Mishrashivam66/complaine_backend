@@ -1,24 +1,87 @@
-const express =
-require("express");
+const express = require("express");
+
+const router = express.Router();
+
+// ==========================================
+// CONTROLLERS
+// ==========================================
 
 const {
-  testNotification,
-  getNotifications
-} =
-require("../controllers/notificationController");
+  getMyNotifications,
+  markAsRead,
+  deleteNotification,
+  markAllAsRead,
+  clearAllNotifications,
+} = require("../controllers/notificationController");
 
-const router =
-express.Router();
+// ==========================================
+// MIDDLEWARE
+// ==========================================
+
+const { protect } = require("../middleware/authMiddleware");
+
+// ==========================================
+// GET MY NOTIFICATIONS
+// ==========================================
 
 router.get(
-  "/test",
-  testNotification
+  "/",
+
+  protect,
+
+  getMyNotifications,
 );
 
-router.get(
-  "/:userId",
-  getNotifications
+// ==========================================
+// MARK AS READ
+// ==========================================
+
+router.put(
+  "/read/:id",
+
+  protect,
+
+  markAsRead,
 );
 
-module.exports =
-router;
+// ==========================================
+// MARK ALL AS READ
+// ==========================================
+
+router.put(
+  "/read-all",
+
+  protect,
+
+  markAllAsRead,
+);
+
+// ==========================================
+// DELETE NOTIFICATION
+// ==========================================
+
+router.delete(
+  "/delete/:id",
+
+  protect,
+
+  deleteNotification,
+);
+
+// ==========================================
+// CLEAR ALL NOTIFICATIONS
+// ==========================================
+
+router.delete(
+  "/clear-all",
+
+  protect,
+
+  clearAllNotifications,
+);
+
+// ==========================================
+// EXPORT
+// ==========================================
+
+module.exports = router;

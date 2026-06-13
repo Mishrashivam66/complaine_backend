@@ -1,39 +1,81 @@
 const mongoose = require("mongoose");
 
-const notificationSchema =
-new mongoose.Schema({
+const notificationSchema = new mongoose.Schema(
+  {
+    title: {
+      type: String,
 
-  user: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User"
+      required: true,
+    },
+
+    message: {
+      type: String,
+
+      required: true,
+    },
+
+    receiver: {
+      type: mongoose.Schema.Types.ObjectId,
+
+      ref: "User",
+
+      required: true,
+    },
+
+    sender: {
+      type: mongoose.Schema.Types.ObjectId,
+
+      ref: "User",
+
+      default: null,
+    },
+
+    type: {
+      type: String,
+
+      enum: [
+        "COMPLAINT",
+
+        "WORKER_ASSIGN",
+
+        "STATUS_UPDATE",
+
+        "MATERIAL_REQUEST",
+
+        "MATERIAL_APPROVED",
+
+        "REOPEN",
+
+        "ESCALATION",
+
+        "SYSTEM",
+      ],
+
+      default: "SYSTEM",
+    },
+
+    isRead: {
+      type: Boolean,
+
+      default: false,
+    },
+
+    relatedComplaint: {
+      type: mongoose.Schema.Types.ObjectId,
+
+      ref: "Complaint",
+
+      default: null,
+    },
   },
 
-  title: String,
-
-  message: String,
-
-  type: {
-    type: String,
-    enum: [
-      "COMPLAINT",
-      "JOB_CARD",
-      "MATERIAL",
-      "INVOICE",
-      "SYSTEM"
-    ]
+  {
+    timestamps: true,
   },
+);
 
-  isRead: {
-    type: Boolean,
-    default: false
-  }
-
-},{
-  timestamps:true
-});
-
-module.exports =
-mongoose.model(
+module.exports = mongoose.model(
   "Notification",
-  notificationSchema
+
+  notificationSchema,
 );

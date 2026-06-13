@@ -1,45 +1,81 @@
 const mongoose = require("mongoose");
 
-const invoiceSchema = new mongoose.Schema(
-{
-  invoiceId: {
-    type: String,
-    unique: true,
-    required: true
+const inventorySchema = new mongoose.Schema(
+  {
+    itemName: {
+      type: String,
+      required: true,
+      unique: true,
+      trim: true,
+    },
+
+    category: {
+      type: String,
+      required: true,
+    },
+
+    otherCategory: {
+      type: String,
+      default: "",
+    },
+
+    currentStock: {
+      type: Number,
+      required: true,
+      default: 0,
+    },
+
+    minimumStock: {
+      type: Number,
+      default: 5,
+    },
+
+    department: {
+      type: String,
+      required: true,
+    },
+
+    status: {
+      type: String,
+
+      enum: ["Available", "Low Stock", "Out Of Stock"],
+
+      default: "Available",
+    },
+
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
   },
 
-  materialRequest: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "MaterialRequest",
-    required: true
+  {
+    timestamps: true,
   },
+);
 
-  itemName: String,
+// ==========================================
+// AUTO STATUS
+// ==========================================
 
-  quantity: Number,
+inventorySchema.pre(
+  "save",
 
-  unitPrice: Number,
+  function (next) {
+    if (this.currentStock === 0) {
+      this.status = "Out Of Stock";
+    } else if (this.currentStock <= this.minimumStock) {
+      this.status = "Low Stock";
+    } else {
+      this.status = "Available";
+    }
 
-  totalAmount: Number,
-
-  generatedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "User"
+    next();
   },
+);
 
-  status: {
-    type: String,
-    enum: ["GENERATED", "PAID"],
-    default: "GENERATED"
-  }
+module.exports = mongoose.model(
+  "Inventory",
 
-},
-{
-  timestamps: true
-});
-
-module.exports =
-mongoose.model(
-  "Invoice",
-  invoiceSchema
+  inventorySchema,
 );

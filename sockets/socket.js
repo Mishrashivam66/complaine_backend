@@ -3,7 +3,6 @@ const { Server } = require("socket.io");
 let io;
 
 const initSocket = (server) => {
-
   io = new Server(server, {
     cors: {
       origin: "*",
@@ -11,32 +10,41 @@ const initSocket = (server) => {
   });
 
   io.on("connection", (socket) => {
+    console.log("User Connected:", socket.id);
 
-    console.log(
-      "User Connected:",
-      socket.id
+    // ==========================================
+    // JOIN USER ROOM
+    // ==========================================
+
+    socket.on(
+      "joinRoom",
+
+      (userId) => {
+        socket.join(userId);
+
+        console.log("User Joined Room:", userId);
+      },
     );
 
-    socket.on("disconnect", () => {
+    // ==========================================
+    // DISCONNECT
+    // ==========================================
 
-      console.log(
-        "User Disconnected:",
-        socket.id
-      );
+    socket.on(
+      "disconnect",
 
-    });
-
+      () => {
+        console.log("User Disconnected:", socket.id);
+      },
+    );
   });
 
   return io;
 };
 
 const getIO = () => {
-
   if (!io) {
-    throw new Error(
-      "Socket.io not initialized"
-    );
+    throw new Error("Socket.io not initialized");
   }
 
   return io;
@@ -44,5 +52,6 @@ const getIO = () => {
 
 module.exports = {
   initSocket,
+
   getIO,
 };

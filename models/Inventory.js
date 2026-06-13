@@ -14,6 +14,11 @@ const inventorySchema = new mongoose.Schema(
       required: true,
     },
 
+    otherCategory: {
+      type: String,
+      default: "",
+    },
+
     currentStock: {
       type: Number,
       required: true,
@@ -31,15 +36,9 @@ const inventorySchema = new mongoose.Schema(
       default: "Piece",
     },
 
-    price: {
-      type: Number,
-      required: true,
-      default: 0,
-    },
-
-    location: {
+    status: {
       type: String,
-      default: "Main Store",
+      default: "Available",
     },
 
     isActive: {
@@ -47,12 +46,26 @@ const inventorySchema = new mongoose.Schema(
       default: true,
     },
   },
+
   {
     timestamps: true,
-  }
+  },
 );
 
-module.exports = mongoose.model(
-  "Inventory",
-  inventorySchema
-);
+// ==========================================
+// AUTO STATUS UPDATE
+// ==========================================
+
+inventorySchema.pre("save", function () {
+  if (this.currentStock === 0) {
+    this.status = "Out Of Stock";
+  } else if (this.currentStock <= this.minimumStock) {
+    this.status = "Low Stock";
+  } else {
+    this.status = "Available";
+  }
+});
+
+// ==========================================
+
+module.exports = mongoose.model("Inventory", inventorySchema);
