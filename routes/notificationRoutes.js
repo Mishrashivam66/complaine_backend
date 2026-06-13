@@ -8,9 +8,15 @@ const router = express.Router();
 
 const {
   getMyNotifications,
+
+  getUnreadCount,
+
   markAsRead,
+
   deleteNotification,
+
   markAllAsRead,
+
   clearAllNotifications,
 } = require("../controllers/notificationController");
 
@@ -30,6 +36,18 @@ router.get(
   protect,
 
   getMyNotifications,
+);
+
+// ==========================================
+// GET UNREAD COUNT
+// ==========================================
+
+router.get(
+  "/unread-count",
+
+  protect,
+
+  getUnreadCount,
 );
 
 // ==========================================

@@ -9,10 +9,22 @@ const { getIO } = require("../sockets/socket");
 const sendNotification = async ({
   receiver,
   sender = null,
+
   title,
   message,
-  type = "GENERAL",
+
+  type = "SYSTEM",
+
+  priority = "LOW",
+
   relatedComplaint = null,
+
+  relatedId = null,
+  relatedModel = null,
+
+  actionUrl = "/dashboard",
+
+  isPermanent = false,
 }) => {
   try {
     // ==========================================
@@ -26,7 +38,7 @@ const sendNotification = async ({
     }
 
     // ==========================================
-    // SAVE NOTIFICATION
+    // CREATE NOTIFICATION
     // ==========================================
 
     const notification = await Notification.create({
@@ -40,7 +52,17 @@ const sendNotification = async ({
 
       type,
 
+      priority,
+
       relatedComplaint,
+
+      relatedId,
+
+      relatedModel,
+
+      actionUrl,
+
+      isPermanent,
 
       isRead: false,
     });
@@ -49,11 +71,7 @@ const sendNotification = async ({
     // POPULATE SENDER
     // ==========================================
 
-    await notification.populate(
-      "sender",
-
-      "name role profilePhoto",
-    );
+    await notification.populate("sender", "name role profilePhoto");
 
     // ==========================================
     // SOCKET EMIT
@@ -62,11 +80,13 @@ const sendNotification = async ({
     try {
       const io = getIO();
 
-      io.to(receiver.toString()).emit(
-        "newNotification",
+      // REAL TIME NOTIFICATION
 
-        notification,
-      );
+      io.to(receiver.toString()).emit("new_notification", notification);
+
+      // UPDATE BELL COUNT
+
+      io.to(receiver.toString()).emit("notification_count_updated");
 
       console.log("Notification Sent Successfully");
     } catch (socketError) {

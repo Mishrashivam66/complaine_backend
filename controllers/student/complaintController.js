@@ -3,7 +3,7 @@ const Category = require("../../models/Category");
 const sendNotification = require("../../utils/sendNotification");
 
 const User = require("../../models/User");
-
+const { getIO } = require("../../sockets/socket");
 // ==========================================
 // 24 HOUR DEADLINE
 // ==========================================
@@ -50,11 +50,13 @@ const createComplaint = async (req, res) => {
 
         type: "COMPLAINT",
 
+        priority: complaint.priority || "MEDIUM",
+
         relatedComplaint: complaint._id,
       });
     } catch (notificationError) {
       console.log(
-        "Notification Error:",
+        "Student Notification Error:",
 
         notificationError.message,
       );
@@ -76,22 +78,35 @@ const createComplaint = async (req, res) => {
       for (const manager of managers) {
         if (!manager?._id) continue;
 
-        await sendNotification({
-          receiver: manager._id,
+        try {
+          await sendNotification({
+            receiver: manager._id,
 
-          sender: req.user.id,
+            sender: req.user.id,
 
-          title: "New Complaint",
+            title: "New Complaint",
 
-          message: `${req.user.name} created a new complaint for ${complaint.subCategory}`,
+            message: `${req.user.name} created a new complaint for ${complaint.subCategory}`,
 
-          type: "COMPLAINT",
+            type: "COMPLAINT",
 
-          relatedComplaint: complaint._id,
-        });
+            priority: complaint.priority || "HIGH",
+
+            relatedComplaint: complaint._id,
+          });
+        } catch (managerNotificationError) {
+          console.log(
+            "Manager Notification Error:",
+
+            managerNotificationError.message,
+          );
+        }
       }
     }
 
+    const io = getIO();
+
+    io.emit("complaintUpdated");
     // ======================================
     // RESPONSE
     // ======================================
@@ -129,6 +144,7 @@ const getAllComplaints = async (req, res) => {
       .sort({
         createdAt: -1,
       });
+  
 
     res.status(200).json({
       success: true,
@@ -176,6 +192,7 @@ const getMyComplaints = async (req, res) => {
       .sort({
         createdAt: -1,
       });
+  
 
     res.status(200).json({
       success: true,
@@ -212,6 +229,7 @@ const getComplaintById = async (req, res) => {
         message: "Complaint not found",
       });
     }
+  
 
     res.status(200).json({
       success: true,
@@ -254,7 +272,9 @@ const updateComplaintStatus = async (req, res) => {
     }
 
     await complaint.save();
+    const io = getIO();
 
+    io.emit("complaintUpdated");
     res.status(200).json({
       success: true,
 
@@ -314,7 +334,9 @@ const assignComplaint = async (req, res) => {
     // ======================================
 
     await complaint.save();
+    const io = getIO();
 
+    io.emit("complaintUpdated");
     res.status(200).json({
       success: true,
 
@@ -356,6 +378,9 @@ const reopenComplaint = async (req, res) => {
     complaint.reopenReason = req.body.reason;
 
     await complaint.save();
+    const io = getIO();
+
+    io.emit("complaintUpdated");
 
     res.status(200).json({
       success: true,

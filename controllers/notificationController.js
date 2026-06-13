@@ -8,6 +8,12 @@ const { getIO } = require("../sockets/socket");
 
 const getMyNotifications = async (req, res) => {
   try {
+    const page = Number(req.query.page) || 1;
+
+    const limit = Number(req.query.limit) || 20;
+
+    const skip = (page - 1) * limit;
+
     const notifications = await Notification.find({
       receiver: req.user._id,
     })
@@ -16,13 +22,11 @@ const getMyNotifications = async (req, res) => {
         createdAt: -1,
       })
 
-      .populate(
-        "sender",
+      .populate("sender", "name role profilePhoto")
 
-        "name role profilePhoto",
-      )
+      .skip(skip)
 
-      .limit(100);
+      .limit(limit);
 
     // ==========================================
     // UNREAD COUNT
@@ -34,10 +38,22 @@ const getMyNotifications = async (req, res) => {
       isRead: false,
     });
 
+    // ==========================================
+    // TOTAL COUNT
+    // ==========================================
+
+    const totalNotifications = await Notification.countDocuments({
+      receiver: req.user._id,
+    });
+
     res.status(200).json({
       success: true,
 
-      count: notifications.length,
+      currentPage: page,
+
+      totalPages: Math.ceil(totalNotifications / limit),
+
+      totalNotifications,
 
       unreadCount,
 
@@ -50,6 +66,34 @@ const getMyNotifications = async (req, res) => {
       success: false,
 
       message: "Failed to fetch notifications",
+    });
+  }
+};
+
+// ==========================================
+// GET UNREAD COUNT
+// ==========================================
+
+const getUnreadCount = async (req, res) => {
+  try {
+    const unreadCount = await Notification.countDocuments({
+      receiver: req.user._id,
+
+      isRead: false,
+    });
+
+    res.status(200).json({
+      success: true,
+
+      unreadCount,
+    });
+  } catch (error) {
+    console.log(error);
+
+    res.status(500).json({
+      success: false,
+
+      message: "Failed to fetch unread count",
     });
   }
 };
@@ -85,6 +129,23 @@ const markAsRead = async (req, res) => {
     notification.isRead = true;
 
     await notification.save();
+
+    // ==========================================
+    // SOCKET EVENT
+    // ==========================================
+
+    try {
+      const io = getIO();
+
+      io.to(req.user._id.toString()).emit(
+        "notification_read",
+        notification._id,
+      );
+
+      io.to(req.user._id.toString()).emit("notification_count_updated");
+    } catch (socketError) {
+      console.log("Socket Error:", socketError.message);
+    }
 
     res.status(200).json({
       success: true,
@@ -134,6 +195,23 @@ const deleteNotification = async (req, res) => {
 
     await notification.deleteOne();
 
+    // ==========================================
+    // SOCKET EVENT
+    // ==========================================
+
+    try {
+      const io = getIO();
+
+      io.to(req.user._id.toString()).emit(
+        "notification_deleted",
+        notification._id,
+      );
+
+      io.to(req.user._id.toString()).emit("notification_count_updated");
+    } catch (socketError) {
+      console.log("Socket Error:", socketError.message);
+    }
+
     res.status(200).json({
       success: true,
 
@@ -168,6 +246,18 @@ const markAllAsRead = async (req, res) => {
       },
     );
 
+    // ==========================================
+    // SOCKET EVENT
+    // ==========================================
+
+    try {
+      const io = getIO();
+
+      io.to(req.user._id.toString()).emit("notification_count_updated");
+    } catch (socketError) {
+      console.log("Socket Error:", socketError.message);
+    }
+
     res.status(200).json({
       success: true,
 
@@ -194,6 +284,18 @@ const clearAllNotifications = async (req, res) => {
       receiver: req.user._id,
     });
 
+    // ==========================================
+    // SOCKET EVENT
+    // ==========================================
+
+    try {
+      const io = getIO();
+
+      io.to(req.user._id.toString()).emit("notification_count_updated");
+    } catch (socketError) {
+      console.log("Socket Error:", socketError.message);
+    }
+
     res.status(200).json({
       success: true,
 
@@ -216,15 +318,30 @@ const clearAllNotifications = async (req, res) => {
 
 const sendRealtimeNotification = async ({
   receiver,
-  sender,
+
+  sender = null,
+
   title,
+
   message,
-  type,
+
+  type = "SYSTEM",
+
+  priority = "LOW",
+
   relatedComplaint = null,
+
+  relatedId = null,
+
+  relatedModel = null,
+
+  actionUrl = "/dashboard",
+
+  isPermanent = false,
 }) => {
   try {
     // ==========================================
-    // SAVE DB
+    // SAVE NOTIFICATION
     // ==========================================
 
     const notification = await Notification.create({
@@ -238,22 +355,40 @@ const sendRealtimeNotification = async ({
 
       type,
 
+      priority,
+
       relatedComplaint,
+
+      relatedId,
+
+      relatedModel,
+
+      actionUrl,
+
+      isPermanent,
     });
+
+    // ==========================================
+    // POPULATE SENDER
+    // ==========================================
+
+    await notification.populate("sender", "name role profilePhoto");
 
     // ==========================================
     // SOCKET EMIT
     // ==========================================
 
-    const io = getIO();
+    try {
+      const io = getIO();
 
-    io.to(receiver.toString()).emit(
-      "newNotification",
+      io.to(receiver.toString()).emit("new_notification", notification);
 
-      notification,
-    );
+      io.to(receiver.toString()).emit("notification_count_updated");
 
-    console.log("Notification Sent Successfully");
+      console.log("Notification Sent Successfully");
+    } catch (socketError) {
+      console.log("Socket Error:", socketError.message);
+    }
 
     return notification;
   } catch (error) {
@@ -263,6 +398,8 @@ const sendRealtimeNotification = async ({
 
 module.exports = {
   getMyNotifications,
+
+  getUnreadCount,
 
   markAsRead,
 

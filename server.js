@@ -125,7 +125,7 @@ const maintenanceRoutes = require("./routes/maintenance/maintenanceRoutes");
 
 const storeRoutes = require("./routes/store/storeRoutes");
 
-
+const startOverdueChecker = require("./utils/overdueChecker");
 // COMMON
 
 const commonRoutes = require("./routes/common/commonRoutes");
@@ -181,6 +181,7 @@ app.use(
   messMenuRoutes,
 );
 app.use("/api/mess/analytics", messAnalyticsRoutes);
+
 
 // ==========================================
 // STUDENT
@@ -299,6 +300,11 @@ const server = http.createServer(app);
 // ==========================================
 
 initSocket(server);
+// ==========================================
+// START OVERDUE CHECKER
+// ==========================================
+
+startOverdueChecker();
 
 // ==========================================
 // PORT
