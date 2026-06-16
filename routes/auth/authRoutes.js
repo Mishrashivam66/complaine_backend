@@ -2,74 +2,47 @@ const express = require("express");
 
 const router = express.Router();
 
-// ==========================================
-// AUTH CONTROLLER
-// ==========================================
-
 const {
   registerUser,
   loginUser,
   getMyProfile,
   updateProfile,
-  verifyEmail,
-  resendVerification,
+  verifyEmailOTP,
+  resendOTP,
 } = require("../../controllers/auth/authController");
-
-// ==========================================
-// PASSWORD ROUTES
-// ==========================================
 
 const passwordRoutes = require("./passwordRoutes");
 
-// ==========================================
-// MIDDLEWARE
-// ==========================================
-
-const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
-
-// ==========================================
-// AUTH ROUTES
-// ==========================================
+const { protect } = require("../../middleware/authMiddleware");
 
 // REGISTER
-
 router.post("/register", registerUser);
 
 // LOGIN
-
 router.post("/login", loginUser);
 
-// PROFILE
+// VERIFY OTP
+router.post("/verify-email-otp", verifyEmailOTP);
 
+// RESEND OTP
+router.post("/resend-otp", resendOTP);
+
+// PROFILE
 router.get("/profile", protect, getMyProfile);
 
 // UPDATE PROFILE
-
 router.put("/profile/update", protect, updateProfile);
 
-// ==========================================
 // PASSWORD ROUTES
-// ==========================================
-
 router.use("/password", passwordRoutes);
-router.get("/verify-email/:token", verifyEmail);
 
-router.post("/resend-verification", resendVerification);
-
-// ==========================================
-// TEST ROUTE
-// ==========================================
-
+// TEST
 router.get("/", (req, res) => {
   res.json({
     success: true,
-
     message: "Auth Routes Working",
   });
 });
 
-// ==========================================
-// EXPORT
-// ==========================================
 
 module.exports = router;

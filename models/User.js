@@ -289,6 +289,16 @@ const userSchema = new mongoose.Schema(
       default: "",
     },
 
+    emailOTP: {
+      type: String,
+      default: null,
+    },
+
+    emailOTPExpire: {
+      type: Date,
+      default: null,
+    },
+
     // ==========================================
     // PASSWORD RESET
     // ==========================================
@@ -335,16 +345,26 @@ userSchema.methods.matchPassword = async function (enteredPassword) {
 // GENERATE EMAIL VERIFICATION TOKEN
 // ==========================================
 
-userSchema.methods.generateVerificationToken = function () {
-  const token = crypto.randomBytes(32).toString("hex");
+// userSchema.methods.generateVerificationToken = function () {
+//   const token = crypto.randomBytes(32).toString("hex");
 
-  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+//   const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
 
-  this.verificationToken = hashedToken;
+//   this.verificationToken = hashedToken;
 
-  this.verificationTokenExpire = new Date(Date.now() + 15 * 60 * 1000);
+//   this.verificationTokenExpire = new Date(Date.now() + 15 * 60 * 1000);
 
-  return token;
+//   return token;
+// };
+
+userSchema.methods.generateEmailOTP = function () {
+  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+
+  this.emailOTP = otp;
+
+  this.emailOTPExpire = new Date(Date.now() + 15 * 60 * 1000);
+
+  return otp;
 };
 
 // ==========================================

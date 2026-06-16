@@ -109,36 +109,25 @@ const registerUser = async (req, res) => {
     // ==========================================
     // GENERATE TOKEN
     // ==========================================
+    const otp = user.generateEmailOTP();
 
-    const verificationToken = user.generateVerificationToken();
-
-    console.log("RAW TOKEN:", verificationToken);
-    console.log("HASH TOKEN:", user.verificationToken);
-    console.log("EXPIRE:", user.verificationTokenExpire);
+    console.log("OTP GENERATED:", otp);
 
     await user.save();
-    const savedUser = await User.findById(user._id);
 
-    console.log("AFTER SAVE TOKEN:", savedUser.verificationToken);
-    console.log("AFTER SAVE EXPIRE:", savedUser.verificationTokenExpire);
-
-    const verifyURL = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
+    console.log("OTP SAVED:", user.emailOTP);
 
     const message = `
 <h2>Campus Nexus ERP</h2>
 
-<p>Welcome to Campus Nexus ERP.</p>
+<p>Your Email Verification OTP:</p>
 
-<p>Please verify your account by clicking below.</p>
+<h1>${otp}</h1>
 
-<a href="${verifyURL}">
-Verify Email
-</a>
-
-<p>This link expires in 15 minutes.</p>
+<p>This OTP expires in 15 minutes.</p>
 `;
 
-    await sendEmail(user.email, "Verify Your Campus Nexus Account", message);
+    await sendEmail(user.email, "Campus Nexus Email Verification OTP", message);
 
     // ==========================================
     // RESPONSE
@@ -442,55 +431,9 @@ const updateProfile = async (req, res) => {
 // ==========================================
 // VERIFY EMAIL
 // ==========================================
-
-const verifyEmail = async (req, res) => {
+const verifyEmailOTP = async (req, res) => {
   try {
-    const hashedToken = crypto
-      .createHash("sha256")
-      .update(req.params.token)
-      .digest("hex");
-
-    const user = await User.findOne({
-      verificationToken: hashedToken,
-      verificationTokenExpire: {
-        $gt: Date.now(),
-      },
-    });
-
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid or expired verification link",
-      });
-    }
-
-    user.isVerified = true;
-
-    user.verificationToken = null;
-
-    user.verificationTokenExpire = null;
-
-    await user.save();
-
-    return res.status(200).json({
-      success: true,
-      message: "Email verified successfully",
-    });
-  } catch (error) {
-    console.log("VERIFY EMAIL ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
-// ==========================================
-// RESEND VERIFICATION EMAIL
-// ========================================
-const resendVerification = async (req, res) => {
-  try {
-    const { email } = req.body;
+    const { email, otp } = req.body;
 
     const user = await User.findOne({
       email,
@@ -499,58 +442,82 @@ const resendVerification = async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-
         message: "User not found",
       });
     }
 
-    if (user.isVerified) {
+    if (
+      !user.emailOTP ||
+      !user.emailOTPExpire ||
+      user.emailOTP !== otp ||
+      user.emailOTPExpire < Date.now()
+    ) {
       return res.status(400).json({
         success: false,
-
-        message: "Email already verified",
+        message: "Invalid or expired OTP",
       });
     }
 
-    const verificationToken = user.generateVerificationToken();
+    user.isVerified = true;
+
+    user.emailOTP = null;
+
+    user.emailOTPExpire = null;
 
     await user.save();
 
-    const verifyURL = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
-
-    const message = `
-      <h2>Campus Nexus ERP</h2>
-
-      <p>Please verify your account.</p>
-
-      <a href="${verifyURL}">
-        Verify Email
-      </a>
-
-      <p>
-        This link expires in 15 minutes.
-      </p>
-    `;
-
-    await sendEmail(
-      user.email,
-
-      "Verify Your Campus Nexus Account",
-
-      message,
-    );
-
     return res.status(200).json({
       success: true,
-
-      message: "Verification email sent successfully",
+      message: "Email verified successfully",
     });
   } catch (error) {
-    console.log("RESEND VERIFICATION ERROR:", error);
+    console.log("VERIFY OTP ERROR:", error);
 
     return res.status(500).json({
       success: false,
+      message: error.message,
+    });
+  }
+};
 
+const resendOTP = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: "User not found",
+      });
+    }
+
+    const otp = user.generateEmailOTP();
+
+    await user.save();
+
+    const message = `
+    <h2>Campus Nexus ERP</h2>
+
+    <p>Your New OTP:</p>
+
+    <h1>${otp}</h1>
+
+    <p>This OTP expires in 15 minutes.</p>
+    `;
+
+    await sendEmail(user.email, "Campus Nexus Email Verification OTP", message);
+
+    return res.status(200).json({
+      success: true,
+      message: "OTP sent successfully",
+    });
+  } catch (error) {
+    console.log("RESEND OTP ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
       message: error.message,
     });
   }
@@ -564,6 +531,6 @@ module.exports = {
   loginUser,
   getMyProfile,
   updateProfile,
-  verifyEmail,
-  resendVerification,
+  verifyEmailOTP,
+  resendOTP,
 };
