@@ -450,6 +450,12 @@ const verifyEmail = async (req, res) => {
 
     console.log("HASHED TOKEN:", hashedToken);
 
+    const allUsers = await User.find({
+      verificationToken: { $ne: null },
+    });
+
+    console.log("USERS WITH TOKEN:", allUsers);
+
     const user = await User.findOne({
       verificationToken: hashedToken,
       verificationTokenExpire: {
@@ -458,33 +464,6 @@ const verifyEmail = async (req, res) => {
     });
 
     console.log("FOUND USER:", user);
-
-    if (!user) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid or expired verification link",
-      });
-    }
-
-    user.isVerified = true;
-    user.verificationToken = null;
-    user.verificationTokenExpire = null;
-
-    await user.save();
-
-    return res.status(200).json({
-      success: true,
-      message: "Email verified successfully",
-    });
-  } catch (error) {
-    console.log("VERIFY EMAIL ERROR:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
-  }
-};
 
 // ==========================================
 // RESEND VERIFICATION EMAIL
