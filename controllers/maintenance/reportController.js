@@ -1,7 +1,5 @@
 const Complaint = require("../../models/Complaint");
-
 const User = require("../../models/User");
-
 const JobCard = require("../../models/JobCard");
 
 // ==========================================
@@ -17,7 +15,7 @@ exports.getReports = async (req, res) => {
     const totalComplaints = await Complaint.countDocuments();
 
     // ==========================================
-    // RESOLVED
+    // RESOLVED COMPLAINTS
     // ==========================================
 
     const resolvedComplaints = await Complaint.countDocuments({
@@ -27,7 +25,7 @@ exports.getReports = async (req, res) => {
     });
 
     // ==========================================
-    // REOPENED
+    // REOPENED CASES
     // ==========================================
 
     const reopenedCases = await Complaint.countDocuments({
@@ -51,6 +49,46 @@ exports.getReports = async (req, res) => {
     });
 
     // ==========================================
+    // TODAY COMPLAINTS
+    // ==========================================
+
+    const startOfToday = new Date();
+
+    startOfToday.setHours(0, 0, 0, 0);
+
+    const todayComplaints = await Complaint.countDocuments({
+      createdAt: {
+        $gte: startOfToday,
+      },
+    });
+
+    // ==========================================
+    // MONTHLY COMPLAINTS
+    // ==========================================
+
+    const startOfMonth = new Date(
+      new Date().getFullYear(),
+      new Date().getMonth(),
+      1,
+    );
+
+    const monthlyComplaints = await Complaint.countDocuments({
+      createdAt: {
+        $gte: startOfMonth,
+      },
+    });
+
+    // ==========================================
+    // RESOLUTION RATE
+    // ==========================================
+
+    let resolutionRate = 0;
+
+    if (totalComplaints > 0) {
+      resolutionRate = Math.round((resolvedComplaints / totalComplaints) * 100);
+    }
+
+    // ==========================================
     // BUILDING ANALYTICS
     // ==========================================
 
@@ -71,6 +109,38 @@ exports.getReports = async (req, res) => {
         },
       },
     ]);
+
+    // ==========================================
+    // CATEGORY ANALYTICS
+    // ==========================================
+
+    const categoryData = await Complaint.aggregate([
+      {
+        $group: {
+          _id: "$category",
+
+          total: {
+            $sum: 1,
+          },
+        },
+      },
+
+      {
+        $sort: {
+          total: -1,
+        },
+      },
+    ]);
+
+    // ==========================================
+    // ACTIVE COMPLAINTS
+    // ==========================================
+
+    const activeComplaints = await Complaint.countDocuments({
+      status: {
+        $in: ["PENDING", "ASSIGNED", "IN_PROGRESS"],
+      },
+    });
 
     // ==========================================
     // WORKER PERFORMANCE
@@ -99,12 +169,29 @@ exports.getReports = async (req, res) => {
         }
 
         return {
+          workerId: worker._id,
+
           name: worker.name,
+
+          department: worker.department || "N/A",
+
+          totalJobs,
+
+          completedJobs,
 
           efficiency,
         };
       }),
     );
+
+    // ==========================================
+    // TOP WORKER
+    // ==========================================
+
+    const topWorker =
+      workerEfficiency.length > 0
+        ? workerEfficiency.sort((a, b) => b.efficiency - a.efficiency)[0]
+        : null;
 
     // ==========================================
     // RESPONSE
@@ -118,22 +205,87 @@ exports.getReports = async (req, res) => {
 
         resolvedComplaints,
 
+        activeComplaints,
+
         overdueIssues,
 
         reopenedCases,
 
+        todayComplaints,
+
+        monthlyComplaints,
+
+        resolutionRate,
+
         buildingData,
 
+        categoryData,
+
         workerEfficiency,
+
+        topWorker,
       },
     });
   } catch (error) {
-    console.log(error);
+    console.log("REPORT ERROR:", error);
 
     return res.status(500).json({
       success: false,
 
       message: "Failed to load reports",
+    });
+  }
+};
+// ==========================================
+// EXPORT PDF REPORT
+// ==========================================
+
+exports.exportPDFReport = async (req, res) => {
+  try {
+    return res.status(200).json({
+      success: true,
+      message: "PDF Export Coming Soon",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "PDF Export Failed",
+    });
+  }
+};
+
+// ==========================================
+// EXPORT EXCEL REPORT
+// ==========================================
+
+exports.exportExcelReport = async (req, res) => {
+  try {
+    return res.status(200).json({
+      success: true,
+      message: "Excel Export Coming Soon",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Excel Export Failed",
+    });
+  }
+};
+
+// ==========================================
+// EXPORT CSV REPORT
+// ==========================================
+
+exports.exportCSVReport = async (req, res) => {
+  try {
+    return res.status(200).json({
+      success: true,
+      message: "CSV Export Coming Soon",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "CSV Export Failed",
     });
   }
 };

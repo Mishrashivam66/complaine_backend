@@ -2,38 +2,38 @@ const express = require("express");
 
 const router = express.Router();
 
-// ==========================================
-// IMPORT CONTROLLER
-// ==========================================
-
 const {
   getReports,
+  exportPDFReport,
+  exportExcelReport,
+  exportCSVReport,
 } = require("../../controllers/maintenance/reportController");
-
-// ==========================================
-// IMPORT MIDDLEWARE
-// ==========================================
 
 const { protect } = require("../../middleware/authMiddleware");
 
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
-// ==========================================
-// GET REPORTS
-// ==========================================
+router.get("/", protect, roleMiddleware("MAINTENANCE_MANAGER"), getReports);
 
 router.get(
-  "/",
-
+  "/export/pdf",
   protect,
-
   roleMiddleware("MAINTENANCE_MANAGER"),
-
-  getReports,
+  exportPDFReport,
 );
 
-// ==========================================
-// EXPORT
-// ==========================================
+router.get(
+  "/export/excel",
+  protect,
+  roleMiddleware("MAINTENANCE_MANAGER"),
+  exportExcelReport,
+);
+
+router.get(
+  "/export/csv",
+  protect,
+  roleMiddleware("MAINTENANCE_MANAGER"),
+  exportCSVReport,
+);
 
 module.exports = router;
