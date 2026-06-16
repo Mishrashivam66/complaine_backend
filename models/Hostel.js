@@ -25,7 +25,7 @@ const hostelSchema = new mongoose.Schema(
     hostelType: {
       type: String,
 
-      enum: ["BOYS", "GIRLS", "INTERNATIONAL"],
+      enum: ["BOYS", "GIRLS", "CO-ED"],
 
       default: "BOYS",
     },

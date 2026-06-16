@@ -3,7 +3,8 @@ const User = require("../../models/User");
 const AuditLog = require("../../models/AuditLog");
 
 const generateToken = require("../../utils/generateToken");
-
+const crypto = require("crypto");
+const sendEmail = require("../../utils/sendEmail");
 // ==========================================
 // REGISTER USER
 // ==========================================
@@ -109,7 +110,27 @@ const registerUser = async (req, res) => {
     // GENERATE TOKEN
     // ==========================================
 
-    const token = generateToken(user._id);
+    const verificationToken = user.generateVerificationToken();
+
+    await user.save();
+
+    const verifyURL = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
+
+    const message = `
+<h2>Campus Nexus ERP</h2>
+
+<p>Welcome to Campus Nexus ERP.</p>
+
+<p>Please verify your account by clicking below.</p>
+
+<a href="${verifyURL}">
+Verify Email
+</a>
+
+<p>This link expires in 15 minutes.</p>
+`;
+
+    await sendEmail(user.email, "Verify Your Campus Nexus Account", message);
 
     // ==========================================
     // RESPONSE
@@ -117,40 +138,7 @@ const registerUser = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-
-      message: "Registration successful",
-
-      token,
-
-      user: {
-        _id: user._id,
-
-        name: user.name,
-
-        email: user.email,
-
-        role: user.role,
-
-        phone: user.phone,
-
-        hostel: user.hostel,
-
-        floor: user.floor,
-
-        pocket: user.pocket,
-
-        roomNumber: user.roomNumber,
-
-        assignedHostel: user.assignedHostel,
-
-        isApproved: user.isApproved,
-
-        permissionPending: user.permissionPending,
-
-        isHosteller: user.isHosteller,
-
-        profileEditLocked: user.profileEditLocked,
-      },
+      message: "Registration successful. Verification email sent.",
     });
   } catch (error) {
     console.log("REGISTER ERROR:", error);
@@ -198,6 +186,27 @@ const loginUser = async (req, res) => {
         success: false,
 
         message: "Invalid email or password",
+      });
+    }
+    // ==========================================
+    // EMAIL VERIFICATION CHECK
+    // ==========================================
+
+    if (!user.isVerified) {
+      return res.status(403).json({
+        success: false,
+        message: "Please verify your email first",
+      });
+    }
+
+    // ==========================================
+    // ACCOUNT STATUS CHECK
+    // ==========================================
+
+    if (!user.isActive) {
+      return res.status(403).json({
+        success: false,
+        message: "Account disabled",
       });
     }
 
@@ -420,15 +429,136 @@ const updateProfile = async (req, res) => {
 };
 
 // ==========================================
-// EXPORTS
+// VERIFY EMAIL
 // ==========================================
 
+const verifyEmail = async (req, res) => {
+  try {
+    const hashedToken = crypto
+      .createHash("sha256")
+      .update(req.params.token)
+      .digest("hex");
+
+    const user = await User.findOne({
+      verificationToken: hashedToken,
+
+      verificationTokenExpire: {
+        $gt: Date.now(),
+      },
+    });
+
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+
+        message: "Invalid or expired verification link",
+      });
+    }
+
+    user.isVerified = true;
+
+    user.verificationToken = null;
+
+    user.verificationTokenExpire = null;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+
+      message: "Email verified successfully",
+    });
+  } catch (error) {
+    console.log("VERIFY EMAIL ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+
+      message: error.message,
+    });
+  }
+};
+
+// ==========================================
+// RESEND VERIFICATION EMAIL
+// ==========================================
+
+const resendVerification = async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const user = await User.findOne({
+      email,
+    });
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+
+        message: "User not found",
+      });
+    }
+
+    if (user.isVerified) {
+      return res.status(400).json({
+        success: false,
+
+        message: "Email already verified",
+      });
+    }
+
+    const verificationToken = user.generateVerificationToken();
+
+    await user.save();
+
+    const verifyURL = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
+
+    const message = `
+      <h2>Campus Nexus ERP</h2>
+
+      <p>Please verify your account.</p>
+
+      <a href="${verifyURL}">
+        Verify Email
+      </a>
+
+      <p>
+        This link expires in 15 minutes.
+      </p>
+    `;
+
+    await sendEmail(
+      user.email,
+
+      "Verify Your Campus Nexus Account",
+
+      message,
+    );
+
+    return res.status(200).json({
+      success: true,
+
+      message: "Verification email sent successfully",
+    });
+  } catch (error) {
+    console.log("RESEND VERIFICATION ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+
+      message: error.message,
+    });
+  }
+};
+
+// ==========================================
+// EXPORTS
+// ==========================================
 module.exports = {
   registerUser,
-
   loginUser,
-
   getMyProfile,
-
   updateProfile,
+  verifyEmail,
+  resendVerification,
 };

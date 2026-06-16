@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
-
 const bcrypt = require("bcryptjs");
+const crypto = require("crypto");
 
 // ==========================================
 // USER SCHEMA
@@ -14,51 +14,54 @@ const userSchema = new mongoose.Schema(
 
     name: {
       type: String,
-
       required: true,
-
       trim: true,
     },
 
     email: {
       type: String,
-
       required: true,
-
       unique: true,
-
       lowercase: true,
-
       trim: true,
 
-      match: [/@.*amity\.edu$/, "Only Amity email allowed"],
+      validate: {
+        validator: function (email) {
+          const allowedDomains = ["s.amity.edu", "gwa.amity.edu"];
+
+          if (!email || !email.includes("@")) {
+            return false;
+          }
+
+          const domain = email.split("@")[1];
+
+          return allowedDomains.includes(domain);
+        },
+
+        message:
+          "Only @s.amity.edu and @gwa.amity.edu email addresses are allowed",
+      },
     },
 
     amizoneId: {
       type: String,
-
       trim: true,
-
       unique: true,
-
       sparse: true,
     },
 
     password: {
       type: String,
-
       required: true,
     },
 
     phone: {
       type: String,
-
       default: "",
     },
 
     profilePhoto: {
       type: String,
-
       default: "",
     },
 
@@ -71,23 +74,14 @@ const userSchema = new mongoose.Schema(
 
       enum: [
         "ADMIN",
-
         "WARDEN",
-
         "MAINTENANCE_MANAGER",
-
         "STORE_MANAGER",
-
         "HOUSEKEEPING_HEAD",
-
         "IT_HEAD",
-
         "WORKER",
-
         "STUDENT",
-
         "FACULTY",
-
         "ADMIN_STAFF",
         "MESS_MANAGER",
       ],
@@ -101,23 +95,18 @@ const userSchema = new mongoose.Schema(
 
     department: {
       type: String,
-
       default: "",
     },
 
     shift: {
       type: String,
-
       enum: ["DAY", "NIGHT", "24x7"],
-
       default: "DAY",
     },
 
     status: {
       type: String,
-
       enum: ["ACTIVE", "BUSY", "OFFLINE", "ON_LEAVE"],
-
       default: "ACTIVE",
     },
 
@@ -127,12 +116,10 @@ const userSchema = new mongoose.Schema(
       enum: ["ACTIVE", "PENDING", "LEFT_HOSTEL"],
 
       default: function () {
-        // HOSTELLER
         if (this.isHosteller) {
           return "PENDING";
         }
 
-        // DAY SCHOLAR
         return "ACTIVE";
       },
     },
@@ -151,37 +138,31 @@ const userSchema = new mongoose.Schema(
 
     isHosteller: {
       type: Boolean,
-
       default: false,
     },
 
     hostel: {
       type: String,
-
       default: "",
     },
 
     block: {
       type: String,
-
       default: "",
     },
 
     roomNumber: {
       type: String,
-
       default: "",
     },
 
     parentPhone: {
       type: String,
-
       default: "",
     },
 
     emergencyContact: {
       type: String,
-
       default: "",
     },
 
@@ -191,27 +172,22 @@ const userSchema = new mongoose.Schema(
 
     assignedHostel: {
       type: String,
-
       default: "",
     },
 
     designation: {
       type: String,
-
       default: "",
     },
 
     employeeId: {
       type: String,
-
       default: "",
     },
 
     assignedWarden: {
       type: mongoose.Schema.Types.ObjectId,
-
       ref: "User",
-
       default: null,
     },
 
@@ -221,28 +197,29 @@ const userSchema = new mongoose.Schema(
 
     isApproved: {
       type: Boolean,
+
       default: function () {
-        // HOSTELLER NEEDS APPROVAL
         if (this.isHosteller) {
           return false;
         }
 
-        // NORMAL USERS AUTO APPROVED
         return true;
       },
     },
 
+    permissionPending: {
+      type: Boolean,
+      default: false,
+    },
+
     approvedBy: {
       type: mongoose.Schema.Types.ObjectId,
-
       ref: "User",
-
       default: null,
     },
 
     approvedAt: {
       type: Date,
-
       default: null,
     },
 
@@ -252,29 +229,39 @@ const userSchema = new mongoose.Schema(
 
     isActive: {
       type: Boolean,
-
       default: true,
     },
 
     lastLogin: {
       type: Date,
-
       default: null,
     },
 
     // ==========================================
-    // PROFILE & VERIFICATION
+    // EMAIL VERIFICATION
     // ==========================================
 
     isVerified: {
       type: Boolean,
-
-      default: true,
+      default: false,
     },
+
+    verificationToken: {
+      type: String,
+      default: null,
+    },
+
+    verificationTokenExpire: {
+      type: Date,
+      default: null,
+    },
+
+    // ==========================================
+    // PROFILE SETTINGS
+    // ==========================================
 
     profileEditLocked: {
       type: Boolean,
-
       default: false,
     },
 
@@ -284,25 +271,21 @@ const userSchema = new mongoose.Schema(
 
     course: {
       type: String,
-
       default: "",
     },
 
     year: {
       type: String,
-
       default: "",
     },
 
     semester: {
       type: String,
-
       default: "",
     },
 
     section: {
       type: String,
-
       default: "",
     },
 
@@ -312,13 +295,11 @@ const userSchema = new mongoose.Schema(
 
     resetPasswordToken: {
       type: String,
-
       default: null,
     },
 
     resetPasswordExpires: {
       type: Date,
-
       default: null,
     },
   },
@@ -332,54 +313,58 @@ const userSchema = new mongoose.Schema(
 // HASH PASSWORD BEFORE SAVE
 // ==========================================
 
-userSchema.pre(
-  "save",
+userSchema.pre("save", async function () {
+  if (!this.isModified("password")) {
+    return;
+  }
 
-  async function () {
-    // ==========================================
-    // IF PASSWORD NOT MODIFIED
-    // ==========================================
+  const salt = await bcrypt.genSalt(10);
 
-    if (!this.isModified("password")) {
-      return;
-    }
-
-    // ==========================================
-    // GENERATE SALT
-    // ==========================================
-
-    const salt = await bcrypt.genSalt(10);
-
-    // ==========================================
-    // HASH PASSWORD
-    // ==========================================
-
-    this.password = await bcrypt.hash(
-      this.password,
-
-      salt,
-    );
-  },
-);
+  this.password = await bcrypt.hash(this.password, salt);
+});
 
 // ==========================================
-// MATCH PASSWORD METHOD
+// MATCH PASSWORD
 // ==========================================
 
 userSchema.methods.matchPassword = async function (enteredPassword) {
-  return await bcrypt.compare(
-    enteredPassword,
+  return await bcrypt.compare(enteredPassword, this.password);
+};
 
-    this.password,
-  );
+// ==========================================
+// GENERATE EMAIL VERIFICATION TOKEN
+// ==========================================
+
+userSchema.methods.generateVerificationToken = function () {
+  const token = crypto.randomBytes(32).toString("hex");
+
+  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+
+  this.verificationToken = hashedToken;
+
+  this.verificationTokenExpire = new Date(Date.now() + 15 * 60 * 1000);
+
+  return token;
+};
+
+// ==========================================
+// GENERATE PASSWORD RESET TOKEN
+// ==========================================
+
+userSchema.methods.generateResetPasswordToken = function () {
+  const token = crypto.randomBytes(32).toString("hex");
+
+  const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
+
+  this.resetPasswordToken = hashedToken;
+
+  this.resetPasswordExpires = new Date(Date.now() + 15 * 60 * 1000);
+
+  return token;
 };
 
 // ==========================================
 // EXPORT MODEL
 // ==========================================
 
-module.exports = mongoose.model(
-  "User",
-
-  userSchema,
-);
+module.exports = mongoose.model("User", userSchema);

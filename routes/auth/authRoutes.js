@@ -8,12 +8,11 @@ const router = express.Router();
 
 const {
   registerUser,
-
   loginUser,
-
   getMyProfile,
-
   updateProfile,
+  verifyEmail,
+  resendVerification,
 } = require("../../controllers/auth/authController");
 
 // ==========================================
@@ -53,6 +52,9 @@ router.put("/profile/update", protect, updateProfile);
 // ==========================================
 
 router.use("/password", passwordRoutes);
+router.get("/verify-email/:token", verifyEmail);
+
+router.post("/resend-verification", resendVerification);
 
 // ==========================================
 // TEST ROUTE
