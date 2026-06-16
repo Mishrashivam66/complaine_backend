@@ -1,7 +1,9 @@
 const Complaint = require("../../models/Complaint");
 const User = require("../../models/User");
 const JobCard = require("../../models/JobCard");
-
+const PDFDocument = require("pdfkit");
+const ExcelJS = require("exceljs");
+const { Parser } = require("json2csv");
 // ==========================================
 // GET REPORTS
 // ==========================================
@@ -242,29 +244,107 @@ exports.getReports = async (req, res) => {
 
 exports.exportPDFReport = async (req, res) => {
   try {
-    return res.status(200).json({
-      success: true,
-      message: "PDF Export Coming Soon",
+    const totalComplaints = await Complaint.countDocuments();
+
+    const resolvedComplaints = await Complaint.countDocuments({
+      status: { $in: ["RESOLVED", "CLOSED"] },
     });
+
+    const activeComplaints = await Complaint.countDocuments({
+      status: { $in: ["PENDING", "ASSIGNED", "IN_PROGRESS"] },
+    });
+
+    const doc = new PDFDocument();
+
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=maintenance-report.pdf",
+    );
+
+    res.setHeader("Content-Type", "application/pdf");
+
+    doc.pipe(res);
+
+    doc.fontSize(22).text("SMART CAMPUS ERP", {
+      align: "center",
+    });
+
+    doc.moveDown();
+
+    doc.fontSize(16).text("Maintenance Report");
+
+    doc.moveDown();
+
+    doc.text(`Total Complaints: ${totalComplaints}`);
+    doc.text(`Resolved Complaints: ${resolvedComplaints}`);
+    doc.text(`Active Complaints: ${activeComplaints}`);
+
+    doc.moveDown();
+
+    doc.text(`Generated On: ${new Date().toLocaleString()}`);
+
+    doc.end();
   } catch (error) {
+    console.log(error);
+
     return res.status(500).json({
       success: false,
       message: "PDF Export Failed",
     });
   }
 };
-
 // ==========================================
 // EXPORT EXCEL REPORT
 // ==========================================
 
 exports.exportExcelReport = async (req, res) => {
   try {
-    return res.status(200).json({
-      success: true,
-      message: "Excel Export Coming Soon",
+    const complaints = await Complaint.find().select(
+      "complaintId title category hostel status priority createdAt",
+    );
+
+    const workbook = new ExcelJS.Workbook();
+
+    const worksheet = workbook.addWorksheet("Maintenance Report");
+
+    worksheet.columns = [
+      { header: "Complaint ID", key: "complaintId", width: 20 },
+      { header: "Title", key: "title", width: 30 },
+      { header: "Category", key: "category", width: 20 },
+      { header: "Hostel", key: "hostel", width: 20 },
+      { header: "Priority", key: "priority", width: 15 },
+      { header: "Status", key: "status", width: 20 },
+      { header: "Created At", key: "createdAt", width: 30 },
+    ];
+
+    complaints.forEach((item) => {
+      worksheet.addRow({
+        complaintId: item.complaintId,
+        title: item.title,
+        category: item.category,
+        hostel: item.hostel,
+        priority: item.priority,
+        status: item.status,
+        createdAt: item.createdAt,
+      });
     });
+
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    );
+
+    res.setHeader(
+      "Content-Disposition",
+      "attachment; filename=maintenance-report.xlsx",
+    );
+
+    await workbook.xlsx.write(res);
+
+    res.end();
   } catch (error) {
+    console.log(error);
+
     return res.status(500).json({
       success: false,
       message: "Excel Export Failed",
@@ -278,11 +358,34 @@ exports.exportExcelReport = async (req, res) => {
 
 exports.exportCSVReport = async (req, res) => {
   try {
-    return res.status(200).json({
-      success: true,
-      message: "CSV Export Coming Soon",
+    const complaints = await Complaint.find().select(
+      "complaintId title category hostel status priority createdAt",
+    );
+
+    const fields = [
+      "complaintId",
+      "title",
+      "category",
+      "hostel",
+      "priority",
+      "status",
+      "createdAt",
+    ];
+
+    const parser = new Parser({
+      fields,
     });
+
+    const csv = parser.parse(complaints);
+
+    res.header("Content-Type", "text/csv");
+
+    res.attachment("maintenance-report.csv");
+
+    return res.send(csv);
   } catch (error) {
+    console.log(error);
+
     return res.status(500).json({
       success: false,
       message: "CSV Export Failed",
