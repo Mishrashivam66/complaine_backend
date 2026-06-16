@@ -34,7 +34,7 @@ const {
 
 router.use(protect);
 
-router.use(authorizeRoles("ADMIN", "SUPER_ADMIN"));
+router.use(authorizeRoles("ADMIN", "SUPER_ADMIN", "MAINTENANCE_MANAGER"));
 
 // ==========================================
 // CREATE

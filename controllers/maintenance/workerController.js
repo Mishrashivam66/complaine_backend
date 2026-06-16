@@ -76,9 +76,6 @@ exports.getWorkers = async (req, res) => {
 // ASSIGN WORKER
 // ==========================================
 
-// ==========================================
-// ASSIGN WORKER
-// ==========================================
 
 exports.assignWorker = async (req, res) => {
   try {
