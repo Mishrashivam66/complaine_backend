@@ -109,6 +109,15 @@ const userSchema = new mongoose.Schema(
       enum: ["ACTIVE", "BUSY", "OFFLINE", "ON_LEAVE"],
       default: "ACTIVE",
     },
+    currentJobs: {
+      type: Number,
+      default: 0,
+    },
+
+    maxJobs: {
+      type: Number,
+      default: 10,
+    },
 
     studentStatus: {
       type: String,
@@ -340,22 +349,6 @@ userSchema.pre("save", async function () {
 userSchema.methods.matchPassword = async function (enteredPassword) {
   return await bcrypt.compare(enteredPassword, this.password);
 };
-
-// ==========================================
-// GENERATE EMAIL VERIFICATION TOKEN
-// ==========================================
-
-// userSchema.methods.generateVerificationToken = function () {
-//   const token = crypto.randomBytes(32).toString("hex");
-
-//   const hashedToken = crypto.createHash("sha256").update(token).digest("hex");
-
-//   this.verificationToken = hashedToken;
-
-//   this.verificationTokenExpire = new Date(Date.now() + 15 * 60 * 1000);
-
-//   return token;
-// };
 
 userSchema.methods.generateEmailOTP = function () {
   const otp = Math.floor(100000 + Math.random() * 900000).toString();

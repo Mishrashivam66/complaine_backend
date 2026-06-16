@@ -144,7 +144,6 @@ const getAllComplaints = async (req, res) => {
       .sort({
         createdAt: -1,
       });
-  
 
     res.status(200).json({
       success: true,
@@ -192,7 +191,6 @@ const getMyComplaints = async (req, res) => {
       .sort({
         createdAt: -1,
       });
-  
 
     res.status(200).json({
       success: true,
@@ -229,7 +227,6 @@ const getComplaintById = async (req, res) => {
         message: "Complaint not found",
       });
     }
-  
 
     res.status(200).json({
       success: true,
@@ -258,36 +255,63 @@ const updateComplaintStatus = async (req, res) => {
     if (!complaint) {
       return res.status(404).json({
         success: false,
-
         message: "Complaint not found",
       });
     }
+
+    const oldStatus = complaint.status;
 
     complaint.status = req.body.status || complaint.status;
 
     complaint.remarks = req.body.remarks || complaint.remarks;
 
-    if (req.body.status === "CLOSED") {
+    // ======================================
+    // COMPLAINT CLOSED
+    // ======================================
+
+    if (
+      req.body.status === "CLOSED" &&
+      oldStatus !== "CLOSED"
+    ) {
       complaint.closedAt = new Date();
+
+      if (complaint.assignedTo) {
+        const worker = await User.findById(
+          complaint.assignedTo
+        );
+
+        if (worker) {
+          worker.currentJobs = Math.max(
+            0,
+            (worker.currentJobs || 0) - 1
+          );
+
+          worker.status =
+            worker.currentJobs >= 10
+              ? "BUSY"
+              : "ACTIVE";
+
+          await worker.save();
+        }
+      }
     }
 
     await complaint.save();
+
     const io = getIO();
 
     io.emit("complaintUpdated");
-    res.status(200).json({
+
+    return res.status(200).json({
       success: true,
-
       message: "Complaint updated successfully",
-
       complaint,
     });
   } catch (error) {
     console.log(error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-
       message: error.message,
     });
   }
@@ -304,8 +328,31 @@ const assignComplaint = async (req, res) => {
     if (!complaint) {
       return res.status(404).json({
         success: false,
-
         message: "Complaint not found",
+      });
+    }
+
+    // ======================================
+    // FIND WORKER
+    // ======================================
+
+    const worker = await User.findById(req.body.assignedTo);
+
+    if (!worker) {
+      return res.status(404).json({
+        success: false,
+        message: "Worker not found",
+      });
+    }
+
+    // ======================================
+    // MAX 10 ACTIVE COMPLAINTS CHECK
+    // ======================================
+
+    if ((worker.currentJobs || 0) >= 10) {
+      return res.status(400).json({
+        success: false,
+        message: "Worker already has 10 active complaints",
       });
     }
 
@@ -313,7 +360,7 @@ const assignComplaint = async (req, res) => {
     // ASSIGN WORKER
     // ======================================
 
-    complaint.assignedTo = req.body.assignedTo;
+    complaint.assignedTo = worker._id;
 
     complaint.status = "ASSIGNED";
 
@@ -321,35 +368,32 @@ const assignComplaint = async (req, res) => {
     // UPDATE WORKER STATUS
     // ======================================
 
-    const worker = await User.findById(req.body.assignedTo);
+    worker.currentJobs = (worker.currentJobs || 0) + 1;
 
-    if (worker) {
-      worker.status = "BUSY";
+    worker.status = worker.currentJobs >= 10 ? "BUSY" : "ACTIVE";
 
-      await worker.save();
-    }
+    await worker.save();
 
     // ======================================
     // SAVE COMPLAINT
     // ======================================
 
     await complaint.save();
+
     const io = getIO();
 
     io.emit("complaintUpdated");
-    res.status(200).json({
+
+    return res.status(200).json({
       success: true,
-
       message: "Complaint assigned successfully",
-
       complaint,
     });
   } catch (error) {
     console.log(error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-
       message: error.message,
     });
   }
@@ -406,11 +450,6 @@ const reopenComplaint = async (req, res) => {
 
 // ==========================================
 // GET CATEGORIES FOR STUDENTS
-// ==========================================
-
-// ==========================================
-// GET CATEGORIES FOR STUDENTS
-// ==========================================
 
 const getCategoriesForStudents = async (req, res) => {
   try {
