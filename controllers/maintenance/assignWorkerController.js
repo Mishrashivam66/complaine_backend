@@ -125,6 +125,8 @@ exports.assignWorker = async (req, res) => {
 
     // FIND WORKER
 
+    // FIND WORKER
+
     const worker = await User.findOne({
       _id: workerId,
       role: "WORKER",
@@ -137,16 +139,23 @@ exports.assignWorker = async (req, res) => {
       });
     }
 
-    // MAX 10 COMPLAINTS CHECK
+    // CHECK IF COMPLAINT ALREADY ASSIGNED
 
-    if ((worker.currentJobs || 0) >= 10) {
+    if (complaint.assignedTo) {
       return res.status(400).json({
         success: false,
-        message: "Worker already has 10 active complaints",
+        message: "Complaint already assigned to a worker",
       });
     }
 
-    // CHECK ALREADY ASSIGNED
+    // MAX JOBS CHECK
+
+    if ((worker.currentJobs || 0) >= (worker.maxJobs || 10)) {
+      return res.status(400).json({
+        success: false,
+        message: "Worker already has maximum active complaints",
+      });
+    }
 
     // CATEGORY MATCH
 
@@ -182,7 +191,8 @@ exports.assignWorker = async (req, res) => {
 
     worker.currentJobs = (worker.currentJobs || 0) + 1;
 
-    worker.status = worker.currentJobs >= 10 ? "BUSY" : "ACTIVE";
+    worker.status =
+      worker.currentJobs >= (worker.maxJobs || 10) ? "BUSY" : "ACTIVE";
 
     await worker.save();
 
@@ -244,7 +254,7 @@ exports.assignWorker = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Failed to assign worker",
+      message: error.message,
     });
   }
 };

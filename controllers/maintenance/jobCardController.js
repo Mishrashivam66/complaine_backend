@@ -290,35 +290,15 @@ exports.updateJobStatus = async (req, res) => {
 
       jobCard.completionTime = new Date();
 
-      // ====================================
-      // UPDATE WORKER STATUS
-      // ====================================
-
       if (jobCard.assignedWorker) {
         const worker = await User.findById(jobCard.assignedWorker);
 
-        // ====================================
-        // CHECK REMAINING JOBS
-        // ====================================
-
-        const remainingJobs = await JobCard.countDocuments({
-          assignedWorker: jobCard.assignedWorker,
-
-          status: {
-            $in: ["ASSIGNED", "IN_PROGRESS", "MATERIAL_REQUIRED"],
-          },
-        });
-
-        // ====================================
-        // UPDATE STATUS
-        // ====================================
-
         if (worker) {
-          if (remainingJobs === 0) {
-            worker.status = "ACTIVE";
-          } else {
-            worker.status = "BUSY";
-          }
+          // DECREASE CURRENT JOBS
+          worker.currentJobs = Math.max(0, (worker.currentJobs || 0) - 1);
+
+          // UPDATE STATUS
+          worker.status = worker.currentJobs >= 10 ? "BUSY" : "ACTIVE";
 
           await worker.save();
         }
