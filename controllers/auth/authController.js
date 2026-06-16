@@ -117,6 +117,10 @@ const registerUser = async (req, res) => {
     console.log("EXPIRE:", user.verificationTokenExpire);
 
     await user.save();
+    const savedUser = await User.findById(user._id);
+
+    console.log("AFTER SAVE TOKEN:", savedUser.verificationToken);
+    console.log("AFTER SAVE EXPIRE:", savedUser.verificationTokenExpire);
 
     const verifyURL = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
 
