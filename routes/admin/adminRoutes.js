@@ -34,11 +34,16 @@ const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 
 router.use(protect);
 
-router.use(authorizeRoles("ADMIN", "SUPER_ADMIN"));
-router.use("/users", userRoutes);
-
+// categories route first
 router.use("/categories", categoryRoutes);
 
+// admin only routes
+router.use(authorizeRoles("ADMIN", "SUPER_ADMIN"));
+
+router.use("/users", userRoutes);
+router.use("/wardens", wardenRoutes);
+router.use("/locations", locationRoutes);
+router.use("/buildings", buildingRoutes);
 // ==========================================
 // TEST ROUTE
 // ==========================================
