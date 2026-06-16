@@ -20,22 +20,38 @@ const userSchema = new mongoose.Schema(
 
     email: {
       type: String,
-      required: true,
+
+      required: function () {
+        return this.role === "STUDENT";
+      },
+
       unique: true,
+
+      sparse: true,
+
       lowercase: true,
+
       trim: true,
 
       validate: {
         validator: function (email) {
-          const allowedDomains = ["s.amity.edu", "gwa.amity.edu"];
+          // Student ke liye Amity mail mandatory
 
-          if (!email || !email.includes("@")) {
-            return false;
+          if (this.role === "STUDENT") {
+            const allowedDomains = ["s.amity.edu", "gwa.amity.edu"];
+
+            if (!email || !email.includes("@")) {
+              return false;
+            }
+
+            const domain = email.split("@")[1];
+
+            return allowedDomains.includes(domain);
           }
 
-          const domain = email.split("@")[1];
+          // Worker / Admin / Manager
 
-          return allowedDomains.includes(domain);
+          return true;
         },
 
         message:

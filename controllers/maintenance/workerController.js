@@ -295,8 +295,7 @@ exports.createWorker = async (req, res) => {
     // ======================================
     // AUTO EMAIL
     // ======================================
-
-    const email = `worker${Date.now()}@amity.edu`;
+    const email = `worker${Date.now()}@gwa.amity.edu`;
 
     // ======================================
     // CREATE WORKER
