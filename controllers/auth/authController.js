@@ -112,6 +112,10 @@ const registerUser = async (req, res) => {
 
     const verificationToken = user.generateVerificationToken();
 
+    console.log("RAW TOKEN:", verificationToken);
+    console.log("HASH TOKEN:", user.verificationToken);
+    console.log("EXPIRE:", user.verificationTokenExpire);
+
     await user.save();
 
     const verifyURL = `${process.env.CLIENT_URL}/verify-email/${verificationToken}`;
