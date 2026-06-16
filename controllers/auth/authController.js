@@ -439,41 +439,41 @@ const updateProfile = async (req, res) => {
 // ==========================================
 // VERIFY EMAIL
 // ==========================================
-
 const verifyEmail = async (req, res) => {
   try {
+    console.log("TOKEN FROM URL:", req.params.token);
+
     const hashedToken = crypto
       .createHash("sha256")
       .update(req.params.token)
       .digest("hex");
 
+    console.log("HASHED TOKEN:", hashedToken);
+
     const user = await User.findOne({
       verificationToken: hashedToken,
-
       verificationTokenExpire: {
         $gt: Date.now(),
       },
     });
 
+    console.log("FOUND USER:", user);
+
     if (!user) {
       return res.status(400).json({
         success: false,
-
         message: "Invalid or expired verification link",
       });
     }
 
     user.isVerified = true;
-
     user.verificationToken = null;
-
     user.verificationTokenExpire = null;
 
     await user.save();
 
     return res.status(200).json({
       success: true,
-
       message: "Email verified successfully",
     });
   } catch (error) {
@@ -481,7 +481,6 @@ const verifyEmail = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-
       message: error.message,
     });
   }
