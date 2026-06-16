@@ -294,11 +294,23 @@ exports.updateJobStatus = async (req, res) => {
         const worker = await User.findById(jobCard.assignedWorker);
 
         if (worker) {
-          // DECREASE CURRENT JOBS
-          worker.currentJobs = Math.max(0, (worker.currentJobs || 0) - 1);
+          // ======================================
+          // LIVE ACTIVE JOB COUNT
+          // ======================================
 
+          const activeJobs = await JobCard.countDocuments({
+            assignedWorker: worker._id,
+
+            status: {
+              $in: ["ASSIGNED", "IN_PROGRESS", "MATERIAL_REQUIRED"],
+            },
+          });
+
+          // ======================================
           // UPDATE STATUS
-          worker.status = worker.currentJobs >= 10 ? "BUSY" : "ACTIVE";
+          // ======================================
+
+          worker.status = activeJobs >= 10 ? "BUSY" : "ACTIVE";
 
           await worker.save();
         }

@@ -105,6 +105,10 @@ exports.assignWorker = async (req, res) => {
   try {
     const { complaintId, workerId } = req.body;
 
+    // ======================================
+    // VALIDATION
+    // ======================================
+
     if (!complaintId || !workerId) {
       return res.status(400).json({
         success: false,
@@ -112,7 +116,9 @@ exports.assignWorker = async (req, res) => {
       });
     }
 
+    // ======================================
     // FIND COMPLAINT
+    // ======================================
 
     const complaint = await Complaint.findById(complaintId);
 
@@ -123,13 +129,14 @@ exports.assignWorker = async (req, res) => {
       });
     }
 
+    // ======================================
     // FIND WORKER
-
-    // FIND WORKER
+    // ======================================
 
     const worker = await User.findOne({
       _id: workerId,
       role: "WORKER",
+      isActive: true,
     });
 
     if (!worker) {
@@ -139,36 +146,36 @@ exports.assignWorker = async (req, res) => {
       });
     }
 
-    // CHECK IF COMPLAINT ALREADY ASSIGNED
+    // ======================================
+    // ALREADY ASSIGNED
+    // ======================================
 
     if (complaint.assignedTo) {
       return res.status(400).json({
         success: false,
-        message: "Complaint already assigned to a worker",
+        message: "Complaint already assigned",
       });
     }
 
-    // MAX JOBS CHECK
-
-    if ((worker.currentJobs || 0) >= (worker.maxJobs || 10)) {
-      return res.status(400).json({
-        success: false,
-        message: "Worker already has maximum active complaints",
-      });
-    }
-
+    // ======================================
     // CATEGORY MATCH
+    // ======================================
 
     const complaintCategory = complaint.category?.toLowerCase()?.trim();
 
     const workerDepartment = worker.department?.toLowerCase()?.trim();
 
+    const categoryMap = {
+      electrical: ["electrical", "electricity"],
+      plumbing: ["plumbing"],
+      carpentry: ["carpentry"],
+      civil: ["civil"],
+      network: ["network", "it"],
+      internet: ["network", "it"],
+    };
+
     const validMatch =
-      complaintCategory === workerDepartment ||
-      (complaintCategory === "electricity" &&
-        workerDepartment === "electrical") ||
-      (complaintCategory === "electrical" &&
-        workerDepartment === "electricity");
+      categoryMap[workerDepartment]?.includes(complaintCategory);
 
     if (!validMatch) {
       return res.status(400).json({
@@ -177,76 +184,132 @@ exports.assignWorker = async (req, res) => {
       });
     }
 
+    // ======================================
+    // ACTIVE JOB COUNT
+    // ======================================
+
+    const activeJobs = await JobCard.countDocuments({
+      assignedWorker: worker._id,
+
+      status: {
+        $in: ["ASSIGNED", "IN_PROGRESS", "MATERIAL_REQUIRED"],
+      },
+    });
+
+    const MAX_JOBS = 10;
+
+    if (activeJobs >= MAX_JOBS) {
+      return res.status(400).json({
+        success: false,
+        message: "Worker already has maximum active complaints",
+      });
+    }
+
+    // ======================================
     // UPDATE COMPLAINT
+    // ======================================
 
     complaint.assignedTo = worker._id;
+
     complaint.assignedBy = req.user._id;
+
     complaint.workerAssigned = true;
+
     complaint.status = "IN_PROGRESS";
+
     complaint.startedAt = new Date();
 
     await complaint.save();
 
-    // UPDATE WORKER
+    // ======================================
+    // CREATE / UPDATE JOBCARD
+    // ======================================
 
-    worker.currentJobs = (worker.currentJobs || 0) + 1;
-
-    worker.status =
-      worker.currentJobs >= (worker.maxJobs || 10) ? "BUSY" : "ACTIVE";
-
-    await worker.save();
-
-    // CHECK EXISTING JOBCARD
-
-    const existingJobCard = await JobCard.findOne({
+    let existingJobCard = await JobCard.findOne({
       complaint: complaint._id,
     });
-
-    // CREATE / UPDATE JOBCARD
 
     if (!existingJobCard) {
       await JobCard.create({
         jobCardId: `JOB-${Date.now()}`,
+
         complaint: complaint._id,
+
         assignedWorker: worker._id,
+
         assignedBy: req.user._id,
+
         status: "IN_PROGRESS",
+
         workerStatus: "WORKING",
+
         startedAt: new Date(),
       });
     } else {
       existingJobCard.assignedWorker = worker._id;
+
       existingJobCard.status = "IN_PROGRESS";
+
       existingJobCard.workerStatus = "WORKING";
+
       existingJobCard.startedAt = new Date();
 
       await existingJobCard.save();
     }
 
+    // ======================================
+    // WORKER STATUS
+    // ======================================
+
+    const updatedActiveJobs = activeJobs + 1;
+
+    worker.status = updatedActiveJobs >= MAX_JOBS ? "BUSY" : "ACTIVE";
+
+    await worker.save();
+
+    // ======================================
     // NOTIFY WORKER
+    // ======================================
 
     await sendNotification({
       receiver: worker._id,
+
       sender: req.user._id,
+
       title: "New Complaint Assigned",
+
       message: `Complaint ${complaint.complaintId} assigned to you`,
+
       type: "WORKER_ASSIGN",
+
       relatedComplaint: complaint._id,
     });
 
+    // ======================================
     // NOTIFY STUDENT
+    // ======================================
 
     await sendNotification({
       receiver: complaint.createdBy,
+
       sender: req.user._id,
+
       title: "Worker Assigned",
+
       message: "Maintenance worker assigned successfully",
+
       type: "STATUS_UPDATE",
+
       relatedComplaint: complaint._id,
     });
 
+    // ======================================
+    // RESPONSE
+    // ======================================
+
     return res.status(200).json({
       success: true,
+
       message: "Worker assigned successfully",
     });
   } catch (error) {
