@@ -439,22 +439,16 @@ const updateProfile = async (req, res) => {
 // ==========================================
 // VERIFY EMAIL
 // ==========================================
+// ==========================================
+// VERIFY EMAIL
+// ==========================================
+
 const verifyEmail = async (req, res) => {
   try {
-    console.log("TOKEN FROM URL:", req.params.token);
-
     const hashedToken = crypto
       .createHash("sha256")
       .update(req.params.token)
       .digest("hex");
-
-    console.log("HASHED TOKEN:", hashedToken);
-
-    const allUsers = await User.find({
-      verificationToken: { $ne: null },
-    });
-
-    console.log("USERS WITH TOKEN:", allUsers);
 
     const user = await User.findOne({
       verificationToken: hashedToken,
@@ -463,12 +457,37 @@ const verifyEmail = async (req, res) => {
       },
     });
 
-    console.log("FOUND USER:", user);
+    if (!user) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid or expired verification link",
+      });
+    }
 
+    user.isVerified = true;
+
+    user.verificationToken = null;
+
+    user.verificationTokenExpire = null;
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Email verified successfully",
+    });
+  } catch (error) {
+    console.log("VERIFY EMAIL ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message,
+    });
+  }
+};
 // ==========================================
 // RESEND VERIFICATION EMAIL
-// ==========================================
-
+// ========================================
 const resendVerification = async (req, res) => {
   try {
     const { email } = req.body;
