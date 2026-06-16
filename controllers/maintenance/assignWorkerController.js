@@ -148,13 +148,6 @@ exports.assignWorker = async (req, res) => {
 
     // CHECK ALREADY ASSIGNED
 
-    if (complaint.assignedTo) {
-      return res.status(400).json({
-        success: false,
-        message: "Worker already assigned",
-      });
-    }
-
     // CATEGORY MATCH
 
     const complaintCategory = complaint.category?.toLowerCase()?.trim();
