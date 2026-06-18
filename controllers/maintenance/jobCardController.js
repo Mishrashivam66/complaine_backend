@@ -91,6 +91,10 @@ exports.getAllJobCards = async (req, res) => {
       .sort({
         createdAt: -1,
       });
+    console.log(
+      "FIRST COMPLAINT =>",
+      JSON.stringify(jobCards[0]?.complaint, null, 2),
+    );
 
     // ======================================
     // RESPONSE
