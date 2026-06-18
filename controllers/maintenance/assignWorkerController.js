@@ -3,7 +3,7 @@ const Complaint = require("../../models/Complaint");
 const User = require("../../models/User");
 
 const JobCard = require("../../models/JobCard");
-
+const Category = require("../../models/Category");
 const sendNotification = require("../../utils/sendNotification");
 
 // ==========================================
@@ -161,28 +161,37 @@ exports.assignWorker = async (req, res) => {
     // CATEGORY MATCH
     // ======================================
 
-    const complaintCategory = complaint.category?.toLowerCase()?.trim();
+// ======================================
+// CATEGORY MATCH
+// ======================================
 
-    const workerDepartment = worker.department?.toLowerCase()?.trim();
+const categoryData = await Category.findOne({
+  categoryName: complaint.category,
+});
 
-    const categoryMap = {
-      electrical: ["electrical", "electricity"],
-      plumbing: ["plumbing"],
-      carpentry: ["carpentry"],
-      civil: ["civil"],
-      network: ["network", "it"],
-      internet: ["network", "it"],
-    };
+if (!categoryData) {
+  return res.status(400).json({
+    success: false,
+    message: "Category configuration not found",
+  });
+}
 
-    const validMatch =
-      categoryMap[workerDepartment]?.includes(complaintCategory);
+const complaintDepartment =
+  categoryData.department?.toLowerCase()?.trim();
 
-    if (!validMatch) {
-      return res.status(400).json({
-        success: false,
-        message: "Worker department does not match complaint category",
-      });
-    }
+const workerDepartment =
+  worker.department?.toLowerCase()?.trim();
+
+console.log("Complaint Category:", complaint.category);
+console.log("Category Department:", categoryData.department);
+console.log("Worker Department:", worker.department);
+
+if (complaintDepartment !== workerDepartment) {
+  return res.status(400).json({
+    success: false,
+    message: `Worker department (${worker.department}) does not match category department (${categoryData.department})`,
+  });
+}
 
     // ======================================
     // ACTIVE JOB COUNT
