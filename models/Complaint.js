@@ -33,6 +33,17 @@ const complaintSchema = new mongoose.Schema(
 
       required: true,
     },
+    titleHindi: {
+      type: String,
+
+      default: "",
+    },
+
+    descriptionHindi: {
+      type: String,
+
+      default: "",
+    },
 
     // ==========================================
     // COMPLAINT AREA

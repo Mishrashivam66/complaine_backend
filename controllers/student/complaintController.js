@@ -3,6 +3,7 @@ const Category = require("../../models/Category");
 const sendNotification = require("../../utils/sendNotification");
 
 const User = require("../../models/User");
+const translate = require("translate-google");
 const { getIO } = require("../../sockets/socket");
 // ==========================================
 // 24 HOUR DEADLINE
@@ -19,9 +20,35 @@ const createComplaint = async (req, res) => {
     // ======================================
     // CREATE COMPLAINT
     // ======================================
+    // ======================================
+    // AUTO TRANSLATE TO HINDI
+    // ======================================
+
+    let titleHindi = "";
+    let descriptionHindi = "";
+
+    try {
+      if (req.body.title) {
+        titleHindi = await translate(req.body.title, {
+          to: "hi",
+        });
+      }
+
+      if (req.body.description) {
+        descriptionHindi = await translate(req.body.description, {
+          to: "hi",
+        });
+      }
+    } catch (error) {
+      console.log("Translation Error:", error.message);
+    }
 
     const complaint = await Complaint.create({
       ...req.body,
+
+      titleHindi,
+
+      descriptionHindi,
 
       status: "PENDING",
 
@@ -269,27 +296,16 @@ const updateComplaintStatus = async (req, res) => {
     // COMPLAINT CLOSED
     // ======================================
 
-    if (
-      req.body.status === "CLOSED" &&
-      oldStatus !== "CLOSED"
-    ) {
+    if (req.body.status === "CLOSED" && oldStatus !== "CLOSED") {
       complaint.closedAt = new Date();
 
       if (complaint.assignedTo) {
-        const worker = await User.findById(
-          complaint.assignedTo
-        );
+        const worker = await User.findById(complaint.assignedTo);
 
         if (worker) {
-          worker.currentJobs = Math.max(
-            0,
-            (worker.currentJobs || 0) - 1
-          );
+          worker.currentJobs = Math.max(0, (worker.currentJobs || 0) - 1);
 
-          worker.status =
-            worker.currentJobs >= 10
-              ? "BUSY"
-              : "ACTIVE";
+          worker.status = worker.currentJobs >= 10 ? "BUSY" : "ACTIVE";
 
           await worker.save();
         }
