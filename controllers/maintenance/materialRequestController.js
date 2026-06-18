@@ -24,23 +24,23 @@ exports.getAllMaterialRequests = async (req, res) => {
             path: "complaint",
 
             select: `
-                  complaintId
-                  title
-                  hostel
-                  roomNumber
-                  category
-                  priority
-                `,
+          complaintId
+          title
+          hostel
+          roomNumber
+          category
+          priority
+        `,
           },
 
           {
             path: "assignedWorker",
 
             select: `
-                  name
-                  phone
-                  department
-                `,
+          name
+          phone
+          department
+        `,
           },
         ],
       })
@@ -49,9 +49,27 @@ exports.getAllMaterialRequests = async (req, res) => {
         path: "requestedBy",
 
         select: `
-              name
-              role
-            `,
+      name
+      role
+    `,
+      })
+
+      .populate({
+        path: "approvedByStore",
+
+        select: `
+      name
+      role
+    `,
+      })
+
+      .populate({
+        path: "issuedBy",
+
+        select: `
+      name
+      role
+    `,
       })
 
       .sort({
