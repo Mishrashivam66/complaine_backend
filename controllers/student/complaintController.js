@@ -14,6 +14,19 @@ const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
 // ==========================================
 // CREATE COMPLAINT
 // ==========================================
+const technicalTerms = {
+  "Tube Light": "ट्यूब लाइट",
+  "Switch Board": "स्विच बोर्ड",
+  Fan: "पंखा",
+  "LED Light": "एलईडी लाइट",
+  Bulb: "बल्ब",
+  AC: "एसी",
+  Cooler: "कूलर",
+  "Water Cooler": "वाटर कूलर",
+  Tap: "नल",
+  "Wash Basin": "वॉश बेसिन",
+  "Door Lock": "दरवाज़े का ताला",
+};
 
 const createComplaint = async (req, res) => {
   try {
@@ -41,6 +54,14 @@ const createComplaint = async (req, res) => {
       }
     } catch (error) {
       console.log("Translation Error:", error.message);
+    }
+
+    // ======================================
+    // TECHNICAL TERM OVERRIDE
+    // ======================================
+
+    if (technicalTerms[req.body.title]) {
+      titleHindi = technicalTerms[req.body.title];
     }
 
     const complaint = await Complaint.create({
