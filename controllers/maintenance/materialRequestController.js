@@ -269,6 +269,15 @@ exports.updateMaterialRequestStatus = async (req, res) => {
     // ======================================
 
     request.status = status;
+    console.log("USER:", req.user);
+
+    if (status === "APPROVED_BY_STORE") {
+      console.log("SETTING APPROVED BY:", req.user._id);
+    }
+
+    if (status === "ISSUED") {
+      console.log("SETTING ISSUED BY:", req.user._id);
+    }
 
     // ======================================
     // STORE APPROVAL
@@ -293,6 +302,7 @@ exports.updateMaterialRequestStatus = async (req, res) => {
     // ======================================
 
     await request.save();
+    console.log("AFTER SAVE:", request);
 
     // ======================================
     // RESPONSE
