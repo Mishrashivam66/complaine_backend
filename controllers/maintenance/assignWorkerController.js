@@ -161,37 +161,23 @@ exports.assignWorker = async (req, res) => {
     // CATEGORY MATCH
     // ======================================
 
-// ======================================
-// CATEGORY MATCH
-// ======================================
+    // ======================================
+    // CATEGORY MATCH
+    // ======================================
 
-const categoryData = await Category.findOne({
-  categoryName: complaint.category,
-});
+    const categoryData = await Category.findOne({
+      categoryName: complaint.category,
+    });
 
-if (!categoryData) {
-  return res.status(400).json({
-    success: false,
-    message: "Category configuration not found",
-  });
-}
+    if (!categoryData) {
+      return res.status(400).json({
+        success: false,
+        message: "Category configuration not found",
+      });
+    }
+    const complaintCategory = complaint.category?.toLowerCase()?.trim();
 
-const complaintDepartment =
-  categoryData.department?.toLowerCase()?.trim();
-
-const workerDepartment =
-  worker.department?.toLowerCase()?.trim();
-
-console.log("Complaint Category:", complaint.category);
-console.log("Category Department:", categoryData.department);
-console.log("Worker Department:", worker.department);
-
-if (complaintDepartment !== workerDepartment) {
-  return res.status(400).json({
-    success: false,
-    message: `Worker department (${worker.department}) does not match category department (${categoryData.department})`,
-  });
-}
+    const workerDepartment = worker.department?.toLowerCase()?.trim();
 
     // ======================================
     // ACTIVE JOB COUNT
