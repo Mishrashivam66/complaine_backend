@@ -52,7 +52,9 @@ exports.getAllJobCards = async (req, res) => {
         select: `
               complaintId
               title
-              description
+               titleHindi
+  description
+  descriptionHindi
               category
               subCategory
               hostel
@@ -146,7 +148,9 @@ exports.getSingleJobCard = async (req, res) => {
         select: `
               complaintId
               title
-              description
+              titleHindi
+  description
+  descriptionHindi
               category
               subCategory
               hostel
