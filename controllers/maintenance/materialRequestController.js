@@ -106,15 +106,7 @@ exports.getAllMaterialRequests = async (req, res) => {
 
 exports.createMaterialRequest = async (req, res) => {
   try {
-    const {
-      jobCardId,
-
-      itemName,
-
-      quantity,
-
-      reason,
-    } = req.body;
+    const { jobCardId, complaintId, itemName, quantity, reason } = req.body;
 
     // ======================================
     // VALIDATION
@@ -132,7 +124,27 @@ exports.createMaterialRequest = async (req, res) => {
     // FIND JOB CARD
     // ======================================
 
-    const jobCard = await JobCard.findById(jobCardId).populate("complaint");
+    const jobCard = await JobCard.findById(jobCardId).populate(
+      "complaints.complaint",
+    );
+
+    if (!jobCard) {
+      return res.status(404).json({
+        success: false,
+        message: "Job Card not found",
+      });
+    }
+
+    const complaintItem = jobCard.complaints.find(
+      (item) => item.complaint.toString() === complaintId,
+    );
+
+    if (!complaintItem) {
+      return res.status(404).json({
+        success: false,
+        message: "Complaint not found",
+      });
+    }
 
     if (!jobCard) {
       return res.status(404).json({
@@ -151,6 +163,8 @@ exports.createMaterialRequest = async (req, res) => {
 
       jobCard: jobCard._id,
 
+      complaint: complaintId,
+
       requestedBy: req.user._id,
 
       itemName,
@@ -167,11 +181,13 @@ exports.createMaterialRequest = async (req, res) => {
     // ======================================
 
     await Request.create({
-      hostel: jobCard?.complaint?.hostel || "H1",
+      hostel: jobCard.hostel,
+      roomNumber: complaintItem.roomNumber,
+      floor: complaintItem.floor,
 
       item: itemName.trim(),
 
-      quantity: quantity,
+      quantity,
 
       requestedBy: req.user.name,
 
@@ -182,9 +198,11 @@ exports.createMaterialRequest = async (req, res) => {
     // UPDATE JOB CARD
     // ======================================
 
-    jobCard.materialRequired = true;
+    complaintItem.materialRequired = true;
+    complaintItem.materialStatus = "PENDING";
 
-    jobCard.status = "MATERIAL_REQUIRED";
+    jobCard.workerStatus = "WAITING_MATERIAL";
+    jobCard.status = "WAITING_MATERIAL";
 
     await jobCard.save();
 

@@ -76,7 +76,6 @@ exports.getWorkers = async (req, res) => {
 // ASSIGN WORKER
 // ==========================================
 
-
 exports.assignWorker = async (req, res) => {
   try {
     const {
@@ -186,29 +185,89 @@ exports.assignWorker = async (req, res) => {
     // ======================================
 
     const existingJobCard = await JobCard.findOne({
-      complaint: complaint._id,
+      hostel: complaint.hostel,
+      category: complaint.category,
+      assignedWorker: worker._id,
+      isCompleted: false,
+      totalComplaints: { $lt: 10 },
     });
-
     // ======================================
     // CREATE JOB CARD
     // ======================================
-
     if (!existingJobCard) {
       await JobCard.create({
         jobCardId: `JOB-${Date.now()}`,
 
-        complaint: complaint._id,
+        hostel: complaint.hostel,
+        block: complaint.block,
+        category: complaint.category,
 
         assignedWorker: worker._id,
-
         assignedBy: req.user._id,
 
         status: "IN_PROGRESS",
-
         workerStatus: "WORKING",
+        startedAt: new Date(),
+
+        complaints: [
+          {
+            serialNumber: 1,
+
+            complaint: complaint._id,
+
+            roomNumber: complaint.roomNumber,
+            floor: complaint.floor,
+
+            title: complaint.title,
+            titleHindi: complaint.titleHindi,
+
+            description: complaint.description,
+            descriptionHindi: complaint.descriptionHindi,
+
+            priority: complaint.priority,
+
+            status: "ASSIGNED",
+
+            startedAt: new Date(),
+
+            materialRequired: complaint.materialRequired || false,
+
+            materialStatus: complaint.materialRequired
+              ? "PENDING"
+              : "NOT_REQUIRED",
+          },
+        ],
+      });
+    } else {
+      existingJobCard.complaints.push({
+        serialNumber: existingJobCard.complaints.length + 1,
+
+        complaint: complaint._id,
+
+        roomNumber: complaint.roomNumber,
+        floor: complaint.floor,
+
+        title: complaint.title,
+        titleHindi: complaint.titleHindi,
+
+        description: complaint.description,
+        descriptionHindi: complaint.descriptionHindi,
+
+        priority: complaint.priority,
+
+        status: "ASSIGNED",
 
         startedAt: new Date(),
+
+        materialRequired: complaint.materialRequired || false,
+
+        materialStatus: complaint.materialRequired ? "PENDING" : "NOT_REQUIRED",
       });
+
+      existingJobCard.workerStatus = "WORKING";
+      existingJobCard.status = "IN_PROGRESS";
+
+      await existingJobCard.save();
     }
 
     // ======================================

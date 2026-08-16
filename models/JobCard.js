@@ -1,4 +1,156 @@
 const mongoose = require("mongoose");
+const complaintItemSchema = new mongoose.Schema(
+  {
+    complaint: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Complaint",
+      required: true,
+    },
+    serialNumber: {
+      type: Number,
+      default: 1,
+    },
+
+    roomNumber: {
+      type: String,
+      default: "",
+    },
+
+    floor: {
+      type: String,
+      default: "",
+    },
+
+    title: {
+      type: String,
+      default: "",
+    },
+
+    titleHindi: {
+      type: String,
+      default: "",
+    },
+
+    description: {
+      type: String,
+      default: "",
+    },
+
+    descriptionHindi: {
+      type: String,
+      default: "",
+    },
+
+    priority: {
+      type: String,
+      enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
+      default: "MEDIUM",
+    },
+
+    status: {
+      type: String,
+      enum: ["ASSIGNED", "IN_PROGRESS", "WAITING_MATERIAL", "COMPLETED"],
+      default: "ASSIGNED",
+    },
+
+    startedAt: {
+      type: Date,
+      default: null,
+    },
+
+    // ✅ NEW
+    completedAt: {
+      type: Date,
+      default: null,
+    },
+
+    // ==========================================
+    // MATERIAL WORKFLOW
+    // ==========================================
+
+    materialRequired: {
+      type: Boolean,
+      default: false,
+    },
+
+    materialRequest: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "MaterialRequest",
+      default: null,
+    },
+
+    materialStatus: {
+      type: String,
+      enum: ["NOT_REQUIRED", "PENDING", "APPROVED", "ISSUED", "REJECTED"],
+      default: "NOT_REQUIRED",
+    },
+    storeSlipNo: {
+      type: String,
+      default: "",
+    },
+
+    storeApprovedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    storeUpdatedAt: {
+      type: Date,
+      default: null,
+    },
+
+    // ==========================================
+    // STUDENT / ATTENDANT VERIFICATION
+    // ==========================================
+
+    verifiedBy: {
+      type: String,
+      enum: ["STUDENT", "ATTENDANT", ""],
+      default: "",
+    },
+
+    verifierName: {
+      type: String,
+      default: "",
+    },
+
+    studentVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    studentSignature: {
+      type: String,
+      default: "",
+    },
+
+    verifiedAt: {
+      type: Date,
+      default: null,
+    },
+    workerRemarks: {
+      type: String,
+      default: "",
+    },
+
+    managerRemarks: {
+      type: String,
+      default: "",
+    },
+
+    remarks: {
+      type: String,
+      default: "",
+    },
+  },
+  {
+    _id: false,
+  },
+);
+// ==========================================
+// JOB CARD SCHEMA
+// ==========================================
 
 const jobCardSchema = new mongoose.Schema(
   {
@@ -8,57 +160,90 @@ const jobCardSchema = new mongoose.Schema(
 
     jobCardId: {
       type: String,
-
+      required: true,
       unique: true,
+    },
 
+    // ==========================================
+    // LOCATION DETAILS
+    // ==========================================
+
+    hostel: {
+      type: String,
+      required: true,
+    },
+
+    block: {
+      type: String,
+      default: "",
+    },
+
+    category: {
+      type: String,
       required: true,
     },
 
     // ==========================================
-    // COMPLAINT
-    // ==========================================
-
-    complaint: {
-      type: mongoose.Schema.Types.ObjectId,
-
-      ref: "Complaint",
-
-      required: true,
-    },
-
-    // ==========================================
-    // ASSIGNED WORKER
+    // WORKER
     // ==========================================
 
     assignedWorker: {
       type: mongoose.Schema.Types.ObjectId,
-
       ref: "User",
-
-      default: null,
+      required: true,
     },
-
-    // ==========================================
-    // ASSIGNED BY
-    // ==========================================
 
     assignedBy: {
       type: mongoose.Schema.Types.ObjectId,
-
       ref: "User",
-
-      default: null,
+      required: true,
     },
 
+    assignedDate: {
+      type: Date,
+      default: Date.now,
+    },
+
+    // ==========================================
+    // GROUPED COMPLAINTS
+    // ==========================================
+
+    complaints: {
+      type: [complaintItemSchema],
+      validate: {
+        validator: function (value) {
+          return value.length > 0 && value.length <= 10;
+        },
+        message: "One Job Card can contain maximum 10 complaints.",
+        required: true,
+      },
+    },
+
+    totalComplaints: {
+      type: Number,
+      default: 0,
+    },
+
+    completedComplaints: {
+      type: Number,
+      default: 0,
+    },
     // ==========================================
     // JOB STATUS
     // ==========================================
 
     status: {
       type: String,
-
-      enum: ["ASSIGNED", "IN_PROGRESS", "MATERIAL_REQUIRED", "COMPLETED"],
-
+      enum: [
+        "CREATED",
+        "ASSIGNED",
+        "IN_PROGRESS",
+        "PARTIALLY_COMPLETED",
+        "WAITING_MATERIAL",
+        "READY_FOR_VERIFICATION",
+        "COMPLETED",
+        "CLOSED",
+      ],
       default: "ASSIGNED",
     },
 
@@ -68,57 +253,19 @@ const jobCardSchema = new mongoose.Schema(
 
     workerStatus: {
       type: String,
-
       enum: ["NOT_STARTED", "WORKING", "WAITING_MATERIAL", "COMPLETED"],
-
       default: "NOT_STARTED",
     },
 
     // ==========================================
-    // MATERIAL REQUIRED
+    // JOB TYPE
     // ==========================================
 
-    materialRequired: {
-      type: Boolean,
-
-      default: false,
-    },
-
-    // ==========================================
-    // REMARKS
-    // ==========================================
-
-    remarks: {
+    jobType: {
       type: String,
-
-      default: "",
+      enum: ["CORRECTIVE", "PREVENTIVE", "BREAKDOWN", "EMERGENCY"],
+      default: "CORRECTIVE",
     },
-
-    // ==========================================
-    // WORK DESCRIPTION
-    // ==========================================
-
-    workDescription: {
-      type: String,
-
-      default: "",
-    },
-
-    // ==========================================
-    // MATERIALS USED
-    // ==========================================
-
-    materialsUsed: [
-      {
-        itemName: {
-          type: String,
-        },
-
-        quantity: {
-          type: Number,
-        },
-      },
-    ],
 
     // ==========================================
     // PRIORITY
@@ -126,106 +273,230 @@ const jobCardSchema = new mongoose.Schema(
 
     priority: {
       type: String,
-
       enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
-
       default: "MEDIUM",
     },
 
     // ==========================================
-    // START TIME
+    // WORK TIMING
     // ==========================================
 
     startedAt: {
       type: Date,
+      default: null,
+    },
 
+    completedAt: {
+      type: Date,
+      default: null,
+    },
+
+    closedAt: {
+      type: Date,
       default: null,
     },
 
     // ==========================================
-    // COMPLETION TIME
+    // QR CODE
     // ==========================================
 
-    completionTime: {
-      type: Date,
-
-      default: null,
+    qrCode: {
+      type: String,
+      default: "",
     },
 
     // ==========================================
-    // ASSIGNED DATE
+    // MAINTENANCE REMARKS
     // ==========================================
 
-    assignedDate: {
-      type: Date,
+    managerRemarks: {
+      type: String,
+      default: "",
+    },
 
-      default: Date.now,
+    workerRemarks: {
+      type: String,
+      default: "",
     },
 
     // ==========================================
-    // VERIFIED BY STUDENT
+    // SIGNATURES
     // ==========================================
 
-    studentVerified: {
+    workerSigned: {
       type: Boolean,
-
       default: false,
     },
 
-    // ==========================================
-    // VERIFIED DATE
-    // ==========================================
+    workerSignature: {
+      type: String,
+      default: "",
+    },
 
-    verifiedAt: {
+    workerSignedAt: {
       type: Date,
+      default: null,
+    },
 
+    wardenVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    wardenSignature: {
+      type: String,
+      default: "",
+    },
+
+    wardenSignedAt: {
+      type: Date,
+      default: null,
+    },
+
+    managerVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    managerSignature: {
+      type: String,
+      default: "",
+    },
+
+    managerSignedAt: {
+      type: Date,
       default: null,
     },
 
     // ==========================================
-    // RATING
+    // IMAGES
     // ==========================================
 
-    rating: {
-      type: Number,
+    beforeWorkImages: [
+      {
+        type: String,
+      },
+    ],
 
-      min: 1,
+    afterWorkImages: [
+      {
+        type: String,
+      },
+    ],
 
-      max: 5,
+    // ==========================================
+    // ACTIVE / HISTORY
+    // ==========================================
 
-      default: null,
+    isCompleted: {
+      type: Boolean,
+      default: false,
     },
 
-    // ==========================================
-    // FEEDBACK
-    // ==========================================
-
-    feedback: {
-      type: String,
-
-      default: "",
-    },
-
-    // ==========================================
-    // IMAGE
-    // ==========================================
-
-    beforeWorkImage: {
-      type: String,
-
-      default: "",
-    },
-
-    afterWorkImage: {
-      type: String,
-
-      default: "",
+    movedToHistory: {
+      type: Boolean,
+      default: false,
     },
   },
-
   {
     timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true },
   },
 );
+
+// ==========================================
+// INDEXES
+// ==========================================
+jobCardSchema.index({
+  hostel: 1,
+  category: 1,
+  assignedWorker: 1,
+  isCompleted: 1,
+});
+
+jobCardSchema.index({
+  assignedWorker: 1,
+});
+
+jobCardSchema.index({
+  jobCardId: 1,
+});
+
+// ==========================================
+// VIRTUALS
+// ==========================================
+
+jobCardSchema.pre("save", function (next) {
+  this.totalComplaints = this.complaints.length;
+
+  this.completedComplaints = this.complaints.filter(
+    (item) => item.status === "COMPLETED",
+  ).length;
+
+  // ==========================================
+  // WAITING MATERIAL
+  // ==========================================
+
+  const waitingMaterial = this.complaints.some(
+    (item) => item.status === "WAITING_MATERIAL",
+  );
+
+  if (waitingMaterial) {
+    this.status = "WAITING_MATERIAL";
+  }
+  // ==========================================
+  // PARTIALLY COMPLETED
+  // ==========================================
+  else if (
+    this.completedComplaints > 0 &&
+    this.completedComplaints < this.totalComplaints
+  ) {
+    this.status = "PARTIALLY_COMPLETED";
+  }
+
+  // ==========================================
+  // READY FOR VERIFICATION
+  // ==========================================
+  else if (
+    this.completedComplaints === this.totalComplaints &&
+    this.totalComplaints > 0
+  ) {
+    this.status = "READY_FOR_VERIFICATION";
+    this.completedAt = new Date();
+  }
+
+  next();
+});
+
+jobCardSchema.virtual("pendingComplaints").get(function () {
+  return this.totalComplaints - this.completedComplaints;
+});
+
+jobCardSchema.virtual("completionPercentage").get(function () {
+  if (this.totalComplaints === 0) return 0;
+
+  return Math.round((this.completedComplaints / this.totalComplaints) * 100);
+});
+
+// ==========================================
+// FLOORS COVERED
+// ==========================================
+
+jobCardSchema.virtual("floorsCovered").get(function () {
+  const floors = [
+    ...new Set(
+      this.complaints
+        .map((item) => item.floor)
+        .filter((floor) => floor && floor.trim() !== ""),
+    ),
+  ];
+
+  return floors;
+});
+
+// ==========================================
+// EXPORT
+// ==========================================
 
 module.exports = mongoose.model("JobCard", jobCardSchema);

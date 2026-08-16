@@ -16,12 +16,23 @@ exports.getMaintenanceDashboard = async (req, res) => {
 
     const totalComplaints = await Complaint.countDocuments();
 
+    const totalJobCards = await JobCard.countDocuments();
+
+    const activeJobCards = await JobCard.countDocuments({
+      isCompleted: false,
+    });
     // ======================================
     // PENDING
     // ======================================
 
     const pendingComplaints = await Complaint.countDocuments({
       status: "PENDING",
+    });
+
+    const inProgressJobCards = await JobCard.countDocuments({
+      status: {
+        $in: ["IN_PROGRESS", "PARTIALLY_COMPLETED", "WAITING_MATERIAL"],
+      },
     });
 
     // ======================================
@@ -42,20 +53,30 @@ exports.getMaintenanceDashboard = async (req, res) => {
       },
     });
 
+    const waitingMaterialJobCards = await JobCard.countDocuments({
+      status: "WAITING_MATERIAL",
+    });
+
+    const verificationPendingJobCards = await JobCard.countDocuments({
+      status: "READY_FOR_VERIFICATION",
+    });
+
     // ======================================
     // OVERDUE
     // ======================================
 
     const overdueComplaints = await Complaint.countDocuments({
       deadline: {
+        $exists: true,
         $lt: new Date(),
       },
-
       status: {
         $nin: ["RESOLVED", "COMPLETED", "CLOSED"],
       },
     });
-
+    const completedJobCards = await JobCard.countDocuments({
+      isCompleted: true,
+    });
     // ======================================
     // ACTIVE WORKERS
     // ======================================
@@ -126,27 +147,27 @@ exports.getMaintenanceDashboard = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-
       dashboard: {
         totalComplaints,
-
         pendingComplaints,
-
         inProgressComplaints,
-
         resolvedComplaints,
-
         overdueComplaints,
 
+        totalJobCards,
+        activeJobCards,
+        inProgressJobCards,
+        completedJobCards,
+
         activeWorkers,
-
         busyWorkers,
-
         offlineWorkers,
 
         resolutionRate,
-
         recentComplaints,
+
+        waitingMaterialJobCards,
+        verificationPendingJobCards,
       },
     });
   } catch (error) {

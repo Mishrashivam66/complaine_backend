@@ -156,11 +156,6 @@ exports.assignWorker = async (req, res) => {
         message: "Complaint already assigned",
       });
     }
-
-    // ======================================
-    // CATEGORY MATCH
-    // ======================================
-
     // ======================================
     // CATEGORY MATCH
     // ======================================
@@ -179,6 +174,13 @@ exports.assignWorker = async (req, res) => {
 
     const workerDepartment = worker.department?.toLowerCase()?.trim();
 
+    if (complaintCategory !== workerDepartment) {
+      return res.status(400).json({
+        success: false,
+        message: "Worker department does not match complaint category",
+      });
+    }
+
     // ======================================
     // ACTIVE JOB COUNT
     // ======================================
@@ -187,7 +189,12 @@ exports.assignWorker = async (req, res) => {
       assignedWorker: worker._id,
 
       status: {
-        $in: ["ASSIGNED", "IN_PROGRESS", "MATERIAL_REQUIRED"],
+        $in: [
+          "ASSIGNED",
+          "IN_PROGRESS",
+          "PARTIALLY_COMPLETED",
+          "WAITING_MATERIAL",
+        ],
       },
     });
 
@@ -221,14 +228,22 @@ exports.assignWorker = async (req, res) => {
     // ======================================
 
     let existingJobCard = await JobCard.findOne({
-      complaint: complaint._id,
+      hostel: complaint.hostel,
+      category: complaint.category,
+      assignedWorker: worker._id,
+      isCompleted: false,
+      totalComplaints: { $lt: 10 },
     });
 
     if (!existingJobCard) {
       await JobCard.create({
         jobCardId: `JOB-${Date.now()}`,
 
-        complaint: complaint._id,
+        hostel: complaint.hostel,
+
+        block: complaint.block,
+
+        category: complaint.category,
 
         assignedWorker: worker._id,
 
@@ -239,14 +254,70 @@ exports.assignWorker = async (req, res) => {
         workerStatus: "WORKING",
 
         startedAt: new Date(),
+        totalComplaints: 1,
+
+        complaints: [
+          {
+            serialNumber: 1,
+
+            complaint: complaint._id,
+
+            roomNumber: complaint.roomNumber,
+
+            floor: complaint.floor,
+
+            title: complaint.title,
+
+            titleHindi: complaint.titleHindi,
+
+            description: complaint.description,
+
+            descriptionHindi: complaint.descriptionHindi,
+
+            priority: complaint.priority,
+
+            status: "ASSIGNED",
+
+            startedAt: new Date(),
+
+            materialRequired: complaint.materialRequired,
+
+            materialStatus: complaint.materialRequired
+              ? "PENDING"
+              : "NOT_REQUIRED",
+          },
+        ],
       });
     } else {
-      existingJobCard.assignedWorker = worker._id;
+      existingJobCard.complaints.push({
+        serialNumber: existingJobCard.complaints.length + 1,
 
-      existingJobCard.status = "IN_PROGRESS";
+        complaint: complaint._id,
+
+        roomNumber: complaint.roomNumber,
+
+        floor: complaint.floor,
+
+        title: complaint.title,
+
+        titleHindi: complaint.titleHindi,
+
+        description: complaint.description,
+
+        descriptionHindi: complaint.descriptionHindi,
+
+        priority: complaint.priority,
+
+        status: "ASSIGNED",
+
+        materialRequired: complaint.materialRequired,
+
+        materialStatus: complaint.materialRequired ? "PENDING" : "NOT_REQUIRED",
+      });
+      existingJobCard.totalComplaints = existingJobCard.complaints.length;
 
       existingJobCard.workerStatus = "WORKING";
-
+      existingJobCard.status = "IN_PROGRESS";
       existingJobCard.startedAt = new Date();
 
       await existingJobCard.save();

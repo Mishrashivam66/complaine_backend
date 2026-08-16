@@ -35,37 +35,31 @@ exports.getAllJobCards = async (req, res) => {
       // ======================================
       // COMPLAINT DETAILS
       // ======================================
-
       .populate({
-        path: "complaint",
+        path: "complaints.complaint",
 
         populate: {
           path: "createdBy",
-
-          select: `
-                name
-                email
-                phone
-              `,
+          select: "name email phone",
         },
 
         select: `
-              complaintId
-              title
-               titleHindi
-  description
-  descriptionHindi
-              category
-              subCategory
-              hostel
-              floor
-              block
-              roomNumber
-              priority
-              status
-              createdAt
-              startedAt
-            `,
+    complaintId
+    title
+    titleHindi
+    description
+    descriptionHindi
+    category
+    subCategory
+    hostel
+    floor
+    block
+    roomNumber
+    priority
+    status
+    createdAt
+    startedAt
+  `,
       })
 
       // ======================================
@@ -92,8 +86,8 @@ exports.getAllJobCards = async (req, res) => {
         createdAt: -1,
       });
     console.log(
-      "FIRST COMPLAINT =>",
-      JSON.stringify(jobCards[0]?.complaint, null, 2),
+      "FIRST JOB CARD =>",
+      JSON.stringify(jobCards[0]?.complaints, null, 2),
     );
 
     // ======================================
@@ -133,39 +127,39 @@ exports.getSingleJobCard = async (req, res) => {
     const jobCard = await JobCard.findById(req.params.id)
 
       // ======================================
-      // COMPLAINT
+      // COMPLAINTS
       // ======================================
 
       .populate({
-        path: "complaint",
+        path: "complaints.complaint",
 
         populate: {
           path: "createdBy",
 
           select: `
-                name
-                email
-                phone
-              `,
+        name
+        email
+        phone
+      `,
         },
 
         select: `
-              complaintId
-              title
-              titleHindi
-  description
-  descriptionHindi
-              category
-              subCategory
-              hostel
-              floor
-              block
-              roomNumber
-              priority
-              status
-              createdAt
-              startedAt
-            `,
+      complaintId
+      title
+      titleHindi
+      description
+      descriptionHindi
+      category
+      subCategory
+      hostel
+      floor
+      block
+      roomNumber
+      priority
+      status
+      createdAt
+      startedAt
+    `,
       })
 
       // ======================================
@@ -176,12 +170,12 @@ exports.getSingleJobCard = async (req, res) => {
         path: "assignedWorker",
 
         select: `
-              name
-              department
-              phone
-              shift
-              status
-            `,
+      name
+      department
+      phone
+      shift
+      status
+    `,
       });
 
     // ======================================
@@ -245,7 +239,7 @@ exports.updateJobStatus = async (req, res) => {
 
     const { id } = req.params;
 
-    const { status, remarks } = req.body;
+    const { complaintId, status, remarks } = req.body;
 
     // ======================================
     // FIND JOB CARD
@@ -256,37 +250,47 @@ exports.updateJobStatus = async (req, res) => {
     if (!jobCard) {
       return res.status(404).json({
         success: false,
-
         message: "Job card not found",
       });
     }
 
-    // ======================================
-    // UPDATE STATUS
-    // ======================================
+    const complaintItem = jobCard.complaints.find(
+      (item) => item.complaint.toString() === complaintId,
+    );
 
-    jobCard.status = status;
-
-    jobCard.remarks = remarks || "";
-
+    if (!complaintItem) {
+      return res.status(404).json({
+        success: false,
+        message: "Complaint not found in this Job Card",
+      });
+    }
     // ======================================
     // IN PROGRESS
     // ======================================
 
     if (status === "IN_PROGRESS") {
       jobCard.workerStatus = "WORKING";
+      complaintItem.status = "IN_PROGRESS";
 
-      jobCard.startedAt = new Date();
+      complaintItem.startedAt = new Date();
+
+      jobCard.workerStatus = "WORKING";
     }
 
     // ======================================
     // MATERIAL REQUIRED
     // ======================================
 
-    if (status === "MATERIAL_REQUIRED") {
+    if (status === "WAITING_MATERIAL") {
       jobCard.workerStatus = "WAITING_MATERIAL";
 
-      jobCard.materialRequired = true;
+      complaintItem.status = "WAITING_MATERIAL";
+
+      complaintItem.materialRequired = true;
+
+      complaintItem.materialStatus = "PENDING";
+
+      jobCard.workerStatus = "WAITING_MATERIAL";
     }
 
     // ======================================
@@ -294,33 +298,32 @@ exports.updateJobStatus = async (req, res) => {
     // ======================================
 
     if (status === "COMPLETED") {
-      jobCard.workerStatus = "COMPLETED";
+      complaintItem.status = "COMPLETED";
 
-      jobCard.completionTime = new Date();
+      complaintItem.completedAt = new Date();
 
-      if (jobCard.assignedWorker) {
-        const worker = await User.findById(jobCard.assignedWorker);
+      const allCompleted = jobCard.complaints.every(
+        (item) => item.status === "COMPLETED",
+      );
 
-        if (worker) {
-          // ======================================
-          // LIVE ACTIVE JOB COUNT
-          // ======================================
+      if (allCompleted) {
+        jobCard.workerStatus = "COMPLETED";
+        jobCard.completedAt = new Date();
+        jobCard.isCompleted = true;
 
-          const activeJobs = await JobCard.countDocuments({
-            assignedWorker: worker._id,
+        if (jobCard.assignedWorker) {
+          const worker = await User.findById(jobCard.assignedWorker);
 
-            status: {
-              $in: ["ASSIGNED", "IN_PROGRESS", "MATERIAL_REQUIRED"],
-            },
-          });
+          if (worker) {
+            const activeJobs = await JobCard.countDocuments({
+              assignedWorker: worker._id,
+              isCompleted: false,
+            });
 
-          // ======================================
-          // UPDATE STATUS
-          // ======================================
+            worker.status = activeJobs >= 10 ? "BUSY" : "ACTIVE";
 
-          worker.status = activeJobs >= 10 ? "BUSY" : "ACTIVE";
-
-          await worker.save();
+            await worker.save();
+          }
         }
       }
     }
@@ -334,11 +337,16 @@ exports.updateJobStatus = async (req, res) => {
     // ======================================
     // UPDATE COMPLAINT
     // ======================================
-
-    const complaint = await Complaint.findById(jobCard.complaint);
+    const complaint = await Complaint.findById(complaintId);
 
     if (complaint) {
-      complaint.status = status === "COMPLETED" ? "RESOLVED" : "IN_PROGRESS";
+      if (status === "COMPLETED") {
+        complaint.status = "RESOLVED";
+      } else if (status === "WAITING_MATERIAL") {
+        complaint.status = "WAITING_MATERIAL";
+      } else {
+        complaint.status = "IN_PROGRESS";
+      }
 
       await complaint.save();
 
