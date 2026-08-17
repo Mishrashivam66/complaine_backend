@@ -426,17 +426,12 @@ jobCardSchema.index({
 // ==========================================
 // VIRTUALS
 // ==========================================
-
-jobCardSchema.pre("save", function (next) {
+jobCardSchema.pre("save", function () {
   this.totalComplaints = this.complaints.length;
 
   this.completedComplaints = this.complaints.filter(
     (item) => item.status === "COMPLETED",
   ).length;
-
-  // ==========================================
-  // WAITING MATERIAL
-  // ==========================================
 
   const waitingMaterial = this.complaints.some(
     (item) => item.status === "WAITING_MATERIAL",
@@ -444,21 +439,12 @@ jobCardSchema.pre("save", function (next) {
 
   if (waitingMaterial) {
     this.status = "WAITING_MATERIAL";
-  }
-  // ==========================================
-  // PARTIALLY COMPLETED
-  // ==========================================
-  else if (
+  } else if (
     this.completedComplaints > 0 &&
     this.completedComplaints < this.totalComplaints
   ) {
     this.status = "PARTIALLY_COMPLETED";
-  }
-
-  // ==========================================
-  // READY FOR VERIFICATION
-  // ==========================================
-  else if (
+  } else if (
     this.completedComplaints === this.totalComplaints &&
     this.totalComplaints > 0
   ) {
@@ -466,7 +452,7 @@ jobCardSchema.pre("save", function (next) {
     this.completedAt = new Date();
   }
 
-  next();
+  // ❌ next() hata do
 });
 
 jobCardSchema.virtual("pendingComplaints").get(function () {
