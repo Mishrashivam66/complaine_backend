@@ -380,10 +380,12 @@ exports.assignWorker = async (req, res) => {
     });
   } catch (error) {
     console.log("ASSIGN WORKER ERROR:", error);
+    console.log(error.stack);
 
     return res.status(500).json({
       success: false,
       message: error.message,
+      stack: error.stack,
     });
   }
 };
