@@ -2,28 +2,51 @@ const express = require("express");
 
 const router = express.Router();
 
-const inventoryRoutes = require("./inventoryRoutes");
+const {
+  createRequest,
+  getRequests,
+  updateMaterialStatus,
+} = require("../../controllers/store/requestController");
 
-const requestRoutes = require("./requestRoutes");
+const { protect } = require("../../middleware/authMiddleware");
 
-const issuedItemRoutes = require("./issuedItemRoutes");
-
-const damagedItemRoutes = require("./damagedItemRoutes");
-
-const dashboardRoutes = require("./dashboardRoutes");
+const roleMiddleware = require("../../middleware/roleMiddleware");
 
 // ==========================================
-// ROUTES
+// CREATE GENERAL STORE REQUEST
 // ==========================================
 
-router.use("/issued-items", issuedItemRoutes);
+router.post(
+  "/add",
+  protect,
+  roleMiddleware("MAINTENANCE_MANAGER"),
+  createRequest,
+);
 
-router.use("/inventory", inventoryRoutes);
+// ==========================================
+// GET REQUESTS
+// ==========================================
 
-router.use("/requests", requestRoutes);
+router.get(
+  "/all",
+  protect,
+  roleMiddleware("MAINTENANCE_MANAGER", "STORE_MANAGER"),
+  getRequests,
+);
 
-router.use("/damaged-items", damagedItemRoutes);
+// ==========================================
+// UPDATE COMPLAINT MATERIAL ITEM STATUS
+// ==========================================
 
-router.use("/dashboard", dashboardRoutes);
+router.put(
+  "/update-material/:requestId/:materialId",
+  protect,
+  roleMiddleware("STORE_MANAGER"),
+  updateMaterialStatus,
+);
+
+// ==========================================
+// EXPORT
+// ==========================================
 
 module.exports = router;
