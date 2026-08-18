@@ -13,6 +13,11 @@ const materialRequestSchema = new mongoose.Schema(
       ref: "JobCard",
       required: true,
     },
+    complaint: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Complaint",
+      required: true,
+    },
 
     requestedBy: {
       type: mongoose.Schema.Types.ObjectId,

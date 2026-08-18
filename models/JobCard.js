@@ -451,8 +451,6 @@ jobCardSchema.pre("save", function () {
     this.status = "READY_FOR_VERIFICATION";
     this.completedAt = new Date();
   }
-
-  // ❌ next() hata do
 });
 
 jobCardSchema.virtual("pendingComplaints").get(function () {

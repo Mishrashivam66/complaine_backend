@@ -10,92 +10,51 @@ const Request = require("../../models/Request");
 
 exports.getAllMaterialRequests = async (req, res) => {
   try {
-    // ======================================
-    // FETCH REQUESTS
-    // ======================================
+    console.log("API HIT");
 
     const requests = await MaterialRequest.find()
-
       .populate({
         path: "jobCard",
-
         populate: [
           {
-            path: "complaint",
-
+            path: "complaints.complaint",
             select: `
-          complaintId
-          title
-          hostel
-          roomNumber
-          category
-          priority
-        `,
+              complaintId
+              title
+              hostel
+              roomNumber
+              category
+              priority
+            `,
           },
-
           {
             path: "assignedWorker",
-
             select: `
-          name
-          phone
-          department
-        `,
+              name
+              phone
+              department
+            `,
           },
         ],
       })
+      .populate("requestedBy", "name role")
+      .populate("approvedByStore", "name role")
+      .populate("issuedBy", "name role")
+      .sort({ createdAt: -1 });
 
-      .populate({
-        path: "requestedBy",
-
-        select: `
-      name
-      role
-    `,
-      })
-
-      .populate({
-        path: "approvedByStore",
-
-        select: `
-      name
-      role
-    `,
-      })
-
-      .populate({
-        path: "issuedBy",
-
-        select: `
-      name
-      role
-    `,
-      })
-
-      .sort({
-        createdAt: -1,
-      });
-
-    // ======================================
-    // RESPONSE
-    // ======================================
+    console.log(requests);
 
     return res.status(200).json({
       success: true,
-
-      count: requests.length,
-
-      message: "Material requests fetched successfully",
-
       requests,
     });
   } catch (error) {
-    console.log(error);
+    console.log("ERROR =", error);
+    console.log(error.stack);
 
     return res.status(500).json({
       success: false,
-
-      message: "Failed to fetch material requests",
+      message: error.message,
     });
   }
 };
@@ -218,12 +177,14 @@ exports.createMaterialRequest = async (req, res) => {
       request,
     });
   } catch (error) {
+    console.log("UPDATE MATERIAL REQUEST ERROR");
     console.log(error);
+    console.log(error.stack);
 
     return res.status(500).json({
       success: false,
-
-      message: "Failed to create material request",
+      message: error.message,
+      error,
     });
   }
 };
