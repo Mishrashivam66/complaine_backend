@@ -419,10 +419,6 @@ jobCardSchema.index({
   assignedWorker: 1,
 });
 
-jobCardSchema.index({
-  jobCardId: 1,
-});
-
 // ==========================================
 // VIRTUALS
 // ==========================================

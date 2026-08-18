@@ -4,10 +4,8 @@ const router = express.Router();
 
 const {
   createRequest,
-
   getRequests,
-
-  updateRequestStatus,
+  updateMaterialStatus,
 } = require("../../controllers/store/requestController");
 
 // CREATE REQUEST
@@ -20,6 +18,6 @@ router.get("/all", getRequests);
 
 // UPDATE STATUS
 
-router.put("/update/:id", updateRequestStatus);
+router.put("/update-material/:requestId/:materialId", updateMaterialStatus);
 
 module.exports = router;

@@ -2,86 +2,53 @@ const express = require("express");
 
 const router = express.Router();
 
-// ==========================================
-// IMPORT CONTROLLERS
-// ==========================================
-
 const {
   getAllMaterialRequests,
-
   createMaterialRequest,
-
-  updateMaterialRequestStatus,
-
   deleteMaterialRequest,
 } = require("../../controllers/maintenance/materialRequestController");
-
-// ==========================================
-// IMPORT MIDDLEWARE
-// ==========================================
 
 const { protect } = require("../../middleware/authMiddleware");
 
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
 // ==========================================
-// GET ALL REQUESTS
+// GET MATERIAL REQUESTS
 // ==========================================
 
 router.get(
   "/",
-
   protect,
 
-  roleMiddleware("MAINTENANCE_MANAGER", "STORE_MANAGER", "WORKER"),
+  roleMiddleware("MAINTENANCE_MANAGER", "STORE_MANAGER"),
 
   getAllMaterialRequests,
 );
 
 // ==========================================
-// CREATE REQUEST
+// CREATE MATERIAL REQUEST
 // ==========================================
 
 router.post(
   "/create",
-
   protect,
 
-  roleMiddleware("MAINTENANCE_MANAGER", "WORKER"),
+  roleMiddleware("MAINTENANCE_MANAGER"),
 
   createMaterialRequest,
 );
 
 // ==========================================
-// UPDATE STATUS
-// ==========================================
-
-router.put(
-  "/update-status/:id",
-
-  protect,
-
-  roleMiddleware("STORE_MANAGER", "MAINTENANCE_MANAGER"),
-
-  updateMaterialRequestStatus,
-);
-
-// ==========================================
-// DELETE REQUEST
+// DELETE MATERIAL REQUEST
 // ==========================================
 
 router.delete(
   "/:id",
-
   protect,
 
   roleMiddleware("MAINTENANCE_MANAGER"),
 
   deleteMaterialRequest,
 );
-
-// ==========================================
-// EXPORT ROUTER
-// ==========================================
 
 module.exports = router;

@@ -185,28 +185,6 @@ exports.assignWorker = async (req, res) => {
     // ACTIVE JOB COUNT
     // ======================================
 
-    const activeJobs = await JobCard.countDocuments({
-      assignedWorker: worker._id,
-
-      status: {
-        $in: [
-          "ASSIGNED",
-          "IN_PROGRESS",
-          "PARTIALLY_COMPLETED",
-          "WAITING_MATERIAL",
-        ],
-      },
-    });
-
-    const MAX_JOBS = 10;
-
-    if (activeJobs >= MAX_JOBS) {
-      return res.status(400).json({
-        success: false,
-        message: "Worker already has maximum active complaints",
-      });
-    }
-
     // ======================================
     // UPDATE COMPLAINT
     // ======================================
@@ -322,17 +300,6 @@ exports.assignWorker = async (req, res) => {
 
       await existingJobCard.save();
     }
-
-    // ======================================
-    // WORKER STATUS
-    // ======================================
-
-    const updatedActiveJobs = activeJobs + 1;
-
-    worker.status = updatedActiveJobs >= MAX_JOBS ? "BUSY" : "ACTIVE";
-
-    await worker.save();
-
     // ======================================
     // NOTIFY WORKER
     // ======================================

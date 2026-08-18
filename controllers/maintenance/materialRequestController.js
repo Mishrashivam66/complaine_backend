@@ -1,8 +1,6 @@
 const MaterialRequest = require("../../models/MaterialRequest");
 
-const JobCard = require("../../models/JobCard");
-
-const Request = require("../../models/Request");
+const Complaint = require("../../models/Complaint");
 
 // ==========================================
 // GET ALL MATERIAL REQUESTS
@@ -10,50 +8,77 @@ const Request = require("../../models/Request");
 
 exports.getAllMaterialRequests = async (req, res) => {
   try {
-    console.log("API HIT");
-
     const requests = await MaterialRequest.find()
+
       .populate({
-        path: "jobCard",
+        path: "complaint",
+
+        select: `
+          complaintId
+          title
+          titleHindi
+          description
+          descriptionHindi
+          hostel
+          block
+          floor
+          roomNumber
+          category
+          priority
+          status
+          assignedTo
+          createdBy
+        `,
+
         populate: [
           {
-            path: "complaints.complaint",
-            select: `
-              complaintId
-              title
-              hostel
-              roomNumber
-              category
-              priority
-            `,
-          },
-          {
-            path: "assignedWorker",
+            path: "assignedTo",
+
             select: `
               name
               phone
               department
+              shift
+            `,
+          },
+
+          {
+            path: "createdBy",
+
+            select: `
+              name
+              email
+              phone
             `,
           },
         ],
       })
-      .populate("requestedBy", "name role")
-      .populate("approvedByStore", "name role")
-      .populate("issuedBy", "name role")
-      .sort({ createdAt: -1 });
 
-    console.log(requests);
+      .populate("requestedBy", "name role")
+
+      .populate("assignedWorker", "name phone department shift")
+
+      .populate("approvedByStore", "name role")
+
+      .populate("issuedBy", "name role")
+
+      .sort({
+        createdAt: -1,
+      });
 
     return res.status(200).json({
       success: true,
+
+      count: requests.length,
+
       requests,
     });
   } catch (error) {
-    console.log("ERROR =", error);
-    console.log(error.stack);
+    console.log("GET MATERIAL REQUEST ERROR:", error);
 
     return res.status(500).json({
       success: false,
+
       message: error.message,
     });
   }
@@ -65,105 +90,151 @@ exports.getAllMaterialRequests = async (req, res) => {
 
 exports.createMaterialRequest = async (req, res) => {
   try {
-    const { jobCardId, complaintId, itemName, quantity, reason } = req.body;
+    const {
+      complaintId,
+
+      materials,
+
+      reason,
+    } = req.body;
 
     // ======================================
     // VALIDATION
     // ======================================
 
-    if (!jobCardId || !itemName || !quantity || !reason) {
+    if (!complaintId) {
       return res.status(400).json({
         success: false,
 
-        message: "Please fill all fields",
+        message: "Complaint ID is required",
+      });
+    }
+
+    if (!Array.isArray(materials) || materials.length === 0) {
+      return res.status(400).json({
+        success: false,
+
+        message: "At least one material is required",
+      });
+    }
+
+    if (!reason?.trim()) {
+      return res.status(400).json({
+        success: false,
+
+        message: "Reason is required",
       });
     }
 
     // ======================================
-    // FIND JOB CARD
+    // VALIDATE MATERIALS
     // ======================================
 
-    const jobCard = await JobCard.findById(jobCardId).populate(
-      "complaints.complaint",
-    );
+    for (const material of materials) {
+      if (
+        !material.itemName?.trim() ||
+        !material.quantity ||
+        Number(material.quantity) <= 0 ||
+        !material.unit
+      ) {
+        return res.status(400).json({
+          success: false,
 
-    if (!jobCard) {
-      return res.status(404).json({
-        success: false,
-        message: "Job Card not found",
-      });
+          message: "Every material must contain item name, quantity and unit",
+        });
+      }
     }
 
-    const complaintItem = jobCard.complaints.find(
-      (item) => item.complaint.toString() === complaintId,
-    );
+    // ======================================
+    // FIND COMPLAINT
+    // ======================================
 
-    if (!complaintItem) {
+    const complaint = await Complaint.findById(complaintId);
+
+    if (!complaint) {
       return res.status(404).json({
         success: false,
+
         message: "Complaint not found",
       });
     }
 
-    if (!jobCard) {
-      return res.status(404).json({
+    // ======================================
+    // WORKER MUST BE ASSIGNED
+    // ======================================
+
+    if (!complaint.assignedTo) {
+      return res.status(400).json({
         success: false,
 
-        message: "Job card not found",
+        message: "Assign worker before creating material request",
       });
     }
 
     // ======================================
-    // CREATE MATERIAL REQUEST
+    // PREVENT DUPLICATE ACTIVE REQUEST
+    // ======================================
+
+    const existingRequest = await MaterialRequest.findOne({
+      complaint: complaint._id,
+
+      status: {
+        $in: [
+          "PENDING",
+          "APPROVED_BY_STORE",
+          "PARTIALLY_APPROVED",
+          "PARTIALLY_ISSUED",
+        ],
+      },
+    });
+
+    if (existingRequest) {
+      return res.status(400).json({
+        success: false,
+
+        message: "Active material request already exists for this complaint",
+      });
+    }
+
+    // ======================================
+    // CREATE REQUEST ID
+    // ======================================
+
+    const requestId = `MAT-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+
+    // ======================================
+    // CLEAN MATERIAL DATA
+    // ======================================
+
+    const materialItems = materials.map((material) => ({
+      itemName: material.itemName.trim(),
+
+      quantity: Number(material.quantity),
+
+      unit: material.unit.trim().toUpperCase(),
+
+      status: "PENDING",
+    }));
+
+    // ======================================
+    // CREATE REQUEST
     // ======================================
 
     const request = await MaterialRequest.create({
-      requestId: `MAT-${Date.now()}`,
+      requestId,
 
-      jobCard: jobCard._id,
+      complaint: complaint._id,
 
-      complaint: complaintId,
+      assignedWorker: complaint.assignedTo,
 
       requestedBy: req.user._id,
 
-      itemName,
+      materials: materialItems,
 
-      quantity,
-
-      reason,
+      reason: reason.trim(),
 
       status: "PENDING",
     });
-
-    // ======================================
-    // CREATE STORE REQUEST
-    // ======================================
-
-    await Request.create({
-      hostel: jobCard.hostel,
-      roomNumber: complaintItem.roomNumber,
-      floor: complaintItem.floor,
-
-      item: itemName.trim(),
-
-      quantity,
-
-      requestedBy: req.user.name,
-
-      status: "Pending",
-    });
-
-    // ======================================
-    // UPDATE JOB CARD
-    // ======================================
-
-    complaintItem.materialRequired = true;
-    complaintItem.materialStatus = "PENDING";
-
-    jobCard.workerStatus = "WAITING_MATERIAL";
-    jobCard.status = "WAITING_MATERIAL";
-
-    await jobCard.save();
 
     // ======================================
     // RESPONSE
@@ -177,125 +248,7 @@ exports.createMaterialRequest = async (req, res) => {
       request,
     });
   } catch (error) {
-    console.log("UPDATE MATERIAL REQUEST ERROR");
-    console.log(error);
-    console.log(error.stack);
-
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-      error,
-    });
-  }
-};
-
-// ==========================================
-// UPDATE MATERIAL REQUEST STATUS
-// ==========================================
-
-exports.updateMaterialRequestStatus = async (req, res) => {
-  try {
-    // ======================================
-    // GET DATA
-    // ======================================
-
-    const { id } = req.params;
-
-    const { status } = req.body;
-
-    console.log("REQ STATUS:", status);
-
-    // ======================================
-    // VALID STATUS
-    // ======================================
-
-    const validStatuses = [
-      "PENDING",
-
-      "APPROVED_BY_STORE",
-
-      "REJECTED",
-
-      "ISSUED",
-
-      "OUT_OF_STOCK",
-    ];
-
-    if (!validStatuses.includes(status)) {
-      return res.status(400).json({
-        success: false,
-
-        message: "Invalid status value",
-      });
-    }
-
-    // ======================================
-    // FIND REQUEST
-    // ======================================
-
-    const request = await MaterialRequest.findById(id);
-
-    if (!request) {
-      return res.status(404).json({
-        success: false,
-
-        message: "Material request not found",
-      });
-    }
-
-    // ======================================
-    // UPDATE STATUS
-    // ======================================
-
-    request.status = status;
-    console.log("USER:", req.user);
-
-    if (status === "APPROVED_BY_STORE") {
-      console.log("SETTING APPROVED BY:", req.user._id);
-    }
-
-    if (status === "ISSUED") {
-      console.log("SETTING ISSUED BY:", req.user._id);
-    }
-
-    // ======================================
-    // STORE APPROVAL
-    // ======================================
-
-    if (status === "APPROVED_BY_STORE") {
-      request.approvedByStore = req.user._id;
-    }
-
-    // ======================================
-    // ISSUED
-    // ======================================
-
-    if (status === "ISSUED") {
-      request.issuedBy = req.user._id;
-
-      request.issuedAt = new Date();
-    }
-
-    // ======================================
-    // SAVE
-    // ======================================
-
-    await request.save();
-    console.log("AFTER SAVE:", request);
-
-    // ======================================
-    // RESPONSE
-    // ======================================
-
-    return res.status(200).json({
-      success: true,
-
-      message: "Material request updated successfully",
-
-      request,
-    });
-  } catch (error) {
-    console.log("UPDATE MATERIAL REQUEST ERROR:", error);
+    console.log("CREATE MATERIAL REQUEST ERROR:", error);
 
     return res.status(500).json({
       success: false,
@@ -321,7 +274,17 @@ exports.deleteMaterialRequest = async (req, res) => {
       });
     }
 
-    await MaterialRequest.findByIdAndDelete(req.params.id);
+    // ONLY PENDING REQUEST CAN BE DELETED
+
+    if (request.status !== "PENDING") {
+      return res.status(400).json({
+        success: false,
+
+        message: "Only pending material requests can be deleted",
+      });
+    }
+
+    await request.deleteOne();
 
     return res.status(200).json({
       success: true,
@@ -329,12 +292,12 @@ exports.deleteMaterialRequest = async (req, res) => {
       message: "Material request deleted successfully",
     });
   } catch (error) {
-    console.log(error);
+    console.log("DELETE MATERIAL REQUEST ERROR:", error);
 
     return res.status(500).json({
       success: false,
 
-      message: "Failed to delete request",
+      message: error.message,
     });
   }
 };
