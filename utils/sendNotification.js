@@ -1,29 +1,21 @@
 const Notification = require("../models/Notification");
 
-const { getIO } = require("../sockets/socket");
-
 // ==========================================
 // SEND NOTIFICATION
+// DATABASE ONLY - NO SOCKET.IO
 // ==========================================
 
 const sendNotification = async ({
   receiver,
   sender = null,
-
   title,
   message,
-
   type = "SYSTEM",
-
   priority = "LOW",
-
   relatedComplaint = null,
-
   relatedId = null,
   relatedModel = null,
-
   actionUrl = "/dashboard",
-
   isPermanent = false,
 }) => {
   try {
@@ -33,8 +25,7 @@ const sendNotification = async ({
 
     if (!receiver) {
       console.log("Notification receiver missing");
-
-      return;
+      return null;
     }
 
     // ==========================================
@@ -43,27 +34,16 @@ const sendNotification = async ({
 
     const notification = await Notification.create({
       receiver,
-
       sender,
-
       title,
-
       message,
-
       type,
-
       priority,
-
       relatedComplaint,
-
       relatedId,
-
       relatedModel,
-
       actionUrl,
-
       isPermanent,
-
       isRead: false,
     });
 
@@ -71,31 +51,16 @@ const sendNotification = async ({
     // POPULATE SENDER
     // ==========================================
 
-    await notification.populate("sender", "name role profilePhoto");
-
-    // ==========================================
-    // SOCKET EMIT
-    // ==========================================
-
-    try {
-      const io = getIO();
-
-      // REAL TIME NOTIFICATION
-
-      io.to(receiver.toString()).emit("new_notification", notification);
-
-      // UPDATE BELL COUNT
-
-      io.to(receiver.toString()).emit("notification_count_updated");
-
-      console.log("Notification Sent Successfully");
-    } catch (socketError) {
-      console.log("Socket Error:", socketError.message);
+    if (sender) {
+      await notification.populate("sender", "name role profilePhoto");
     }
+
+    console.log("Notification Saved Successfully");
 
     return notification;
   } catch (error) {
     console.log("Notification Error:", error.message);
+    return null;
   }
 };
 

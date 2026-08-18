@@ -4,7 +4,6 @@ const sendNotification = require("../../utils/sendNotification");
 
 const User = require("../../models/User");
 const translate = require("translate-google");
-const { getIO } = require("../../sockets/socket");
 // ==========================================
 // 24 HOUR DEADLINE
 // ==========================================
