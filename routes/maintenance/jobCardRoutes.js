@@ -7,12 +7,10 @@ const router = express.Router();
 // ==========================================
 
 const {
+  createJobCard,
   getAllJobCards,
-
   getSingleJobCard,
-
   updateJobStatus,
-
   deleteJobCard,
 } = require("../../controllers/maintenance/jobCardController");
 
@@ -25,18 +23,25 @@ const { protect } = require("../../middleware/authMiddleware");
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
 // ==========================================
+// CREATE JOB CARD
+// ONLY MAINTENANCE MANAGER
+// ==========================================
+
+router.post(
+  "/create",
+  protect,
+  roleMiddleware("MAINTENANCE_MANAGER"),
+  createJobCard,
+);
+
+// ==========================================
 // GET ALL JOB CARDS
-// MAINTENANCE MANAGER -> ALL JOBS
-// WORKER -> ONLY OWN JOBS
 // ==========================================
 
 router.get(
   "/",
-
   protect,
-
   roleMiddleware("MAINTENANCE_MANAGER", "WORKER"),
-
   getAllJobCards,
 );
 
@@ -46,11 +51,8 @@ router.get(
 
 router.get(
   "/:id",
-
   protect,
-
   roleMiddleware("MAINTENANCE_MANAGER", "WORKER"),
-
   getSingleJobCard,
 );
 
@@ -60,31 +62,24 @@ router.get(
 
 router.put(
   "/update-status/:id",
-
   protect,
-
   roleMiddleware("MAINTENANCE_MANAGER", "WORKER"),
-
   updateJobStatus,
 );
 
 // ==========================================
 // DELETE JOB CARD
-// ONLY MAINTENANCE MANAGER
 // ==========================================
 
 router.delete(
   "/:id",
-
   protect,
-
   roleMiddleware("MAINTENANCE_MANAGER"),
-
   deleteJobCard,
 );
 
 // ==========================================
-// EXPORT ROUTER
+// EXPORT
 // ==========================================
 
 module.exports = router;

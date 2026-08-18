@@ -2,10 +2,471 @@ const JobCard = require("../../models/JobCard");
 
 const Complaint = require("../../models/Complaint");
 
-const sendNotification = require("../../utils/sendNotification");
+const MaterialRequest = require("../../models/MaterialRequest");
+// ==========================================
+// CREATE GROUPED JOB CARD
+// ==========================================
 
-const User = require("../../models/User");
+exports.createJobCard = async (req, res) => {
+  try {
+    const { complaintIds } = req.body;
 
+    // ======================================
+    // VALIDATION
+    // ======================================
+
+    if (!Array.isArray(complaintIds) || complaintIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please select at least one complaint",
+      });
+    }
+
+    // ======================================
+    // MAXIMUM 10 COMPLAINTS
+    // ======================================
+
+    if (complaintIds.length > 10) {
+      return res.status(400).json({
+        success: false,
+        message: "Maximum 10 complaints are allowed in one Job Card",
+      });
+    }
+
+    // ======================================
+    // REMOVE DUPLICATE IDS
+    // ======================================
+
+    const uniqueComplaintIds = [
+      ...new Set(complaintIds.map((id) => id.toString())),
+    ];
+
+    if (uniqueComplaintIds.length !== complaintIds.length) {
+      return res.status(400).json({
+        success: false,
+        message: "Duplicate complaints are not allowed",
+      });
+    }
+
+    // ======================================
+    // FETCH COMPLAINTS
+    // ======================================
+
+    const complaints = await Complaint.find({
+      _id: {
+        $in: uniqueComplaintIds,
+      },
+    })
+      .populate("assignedTo", "name phone department shift status")
+      .populate("createdBy", "name email phone")
+      .sort({
+        createdAt: 1,
+      });
+
+    // ======================================
+    // CHECK ALL COMPLAINTS FOUND
+    // ======================================
+
+    if (complaints.length !== uniqueComplaintIds.length) {
+      return res.status(404).json({
+        success: false,
+        message: "One or more complaints were not found",
+      });
+    }
+
+    // ======================================
+    // ALL MUST BE ASSIGNED
+    // ======================================
+
+    const unassignedComplaint = complaints.find(
+      (complaint) => !complaint.assignedTo,
+    );
+
+    if (unassignedComplaint) {
+      return res.status(400).json({
+        success: false,
+        message: `Complaint ${unassignedComplaint.complaintId} has no assigned worker`,
+      });
+    }
+
+    // ======================================
+    // FIRST COMPLAINT
+    // ======================================
+
+    const firstComplaint = complaints[0];
+
+    const firstWorkerId = firstComplaint.assignedTo._id.toString();
+
+    const firstCategory = firstComplaint.category?.trim()?.toLowerCase();
+
+    // ======================================
+    // MAIN LOCATION
+    // ======================================
+
+    const getMainLocation = (complaint) => {
+      if (complaint.hostel?.trim()) {
+        return {
+          type: "HOSTEL",
+
+          value: complaint.hostel.trim().toLowerCase(),
+
+          original: complaint.hostel.trim(),
+        };
+      }
+
+      if (complaint.block?.trim()) {
+        return {
+          type: "BLOCK",
+
+          value: complaint.block.trim().toLowerCase(),
+
+          original: complaint.block.trim(),
+        };
+      }
+
+      return null;
+    };
+
+    const firstLocation = getMainLocation(firstComplaint);
+
+    if (!firstLocation) {
+      return res.status(400).json({
+        success: false,
+        message: "Complaint location is missing",
+      });
+    }
+
+    // ======================================
+    // VALIDATE SAME WORKER
+    // SAME CATEGORY
+    // SAME LOCATION
+    // ======================================
+
+    for (const complaint of complaints) {
+      const complaintWorkerId = complaint.assignedTo._id.toString();
+
+      const complaintCategory = complaint.category?.trim()?.toLowerCase();
+
+      const complaintLocation = getMainLocation(complaint);
+
+      // SAME WORKER
+
+      if (complaintWorkerId !== firstWorkerId) {
+        return res.status(400).json({
+          success: false,
+
+          message: "All complaints must be assigned to the same worker",
+        });
+      }
+
+      // SAME CATEGORY
+
+      if (complaintCategory !== firstCategory) {
+        return res.status(400).json({
+          success: false,
+
+          message: "All complaints must have the same category",
+        });
+      }
+
+      // LOCATION REQUIRED
+
+      if (!complaintLocation) {
+        return res.status(400).json({
+          success: false,
+
+          message: `Location missing for complaint ${complaint.complaintId}`,
+        });
+      }
+
+      // SAME LOCATION TYPE + VALUE
+
+      if (
+        complaintLocation.type !== firstLocation.type ||
+        complaintLocation.value !== firstLocation.value
+      ) {
+        return res.status(400).json({
+          success: false,
+
+          message: "All complaints must belong to the same location",
+        });
+      }
+    }
+
+    // ======================================
+    // CHECK IF COMPLAINT ALREADY EXISTS
+    // IN ANOTHER JOB CARD
+    // ======================================
+
+    const existingJobCard = await JobCard.findOne({
+      "complaints.complaint": {
+        $in: uniqueComplaintIds,
+      },
+    });
+
+    if (existingJobCard) {
+      return res.status(400).json({
+        success: false,
+
+        message: "One or more selected complaints already belong to a Job Card",
+      });
+    }
+
+    // ======================================
+    // FETCH MATERIAL REQUESTS
+    // ======================================
+
+    const materialRequests = await MaterialRequest.find({
+      complaint: {
+        $in: uniqueComplaintIds,
+      },
+    });
+
+    // ======================================
+    // MATERIAL REQUEST MAP
+    // ======================================
+
+    const materialRequestMap = new Map();
+
+    materialRequests.forEach((request) => {
+      materialRequestMap.set(request.complaint.toString(), request);
+    });
+
+    // ======================================
+    // MATERIAL STATUS MAPPER
+    // ======================================
+
+    const getMaterialStatus = (request) => {
+      if (!request) {
+        return "NOT_REQUIRED";
+      }
+
+      switch (request.status) {
+        case "ISSUED":
+          return "ISSUED";
+
+        case "APPROVED_BY_STORE":
+        case "PARTIALLY_APPROVED":
+        case "PARTIALLY_ISSUED":
+          return "APPROVED";
+
+        case "REJECTED":
+          return "REJECTED";
+
+        default:
+          return "PENDING";
+      }
+    };
+
+    // ======================================
+    // CREATE COMPLAINT ITEMS
+    // ======================================
+
+    const complaintItems = complaints.map((complaint, index) => {
+      const materialRequest = materialRequestMap.get(complaint._id.toString());
+
+      const materialRequired = Boolean(materialRequest);
+
+      let itemStatus =
+        complaint.status === "IN_PROGRESS" ? "IN_PROGRESS" : "ASSIGNED";
+
+      if (
+        materialRequest &&
+        ["PENDING", "PARTIALLY_APPROVED", "OUT_OF_STOCK"].includes(
+          materialRequest.status,
+        )
+      ) {
+        itemStatus = "WAITING_MATERIAL";
+      }
+
+      return {
+        serialNumber: index + 1,
+
+        complaint: complaint._id,
+
+        roomNumber: complaint.roomNumber || "",
+
+        floor: complaint.floor || "",
+
+        title: complaint.title || "",
+
+        titleHindi: complaint.titleHindi || "",
+
+        description: complaint.description || "",
+
+        descriptionHindi: complaint.descriptionHindi || "",
+
+        priority: complaint.priority || "MEDIUM",
+
+        status: itemStatus,
+
+        startedAt: complaint.startedAt || null,
+
+        materialRequired,
+
+        materialRequest: materialRequest?._id || null,
+
+        materialStatus: getMaterialStatus(materialRequest),
+
+        storeSlipNo: materialRequest?.storeSlipNo || "",
+      };
+    });
+
+    // ======================================
+    // HIGHEST PRIORITY
+    // ======================================
+
+    const priorityWeight = {
+      LOW: 1,
+      MEDIUM: 2,
+      HIGH: 3,
+      URGENT: 4,
+    };
+
+    const highestPriority = complaints.reduce((highest, complaint) => {
+      const current = complaint.priority || "MEDIUM";
+
+      return priorityWeight[current] > priorityWeight[highest]
+        ? current
+        : highest;
+    }, "LOW");
+
+    // ======================================
+    // FLOWS WAITING FOR MATERIAL?
+    // ======================================
+
+    const waitingMaterial = complaintItems.some(
+      (item) => item.status === "WAITING_MATERIAL",
+    );
+
+    // ======================================
+    // JOB ID
+    // ======================================
+
+    const year = new Date().getFullYear();
+
+    const jobCardId = `JOB-${year}-${Date.now().toString().slice(-8)}`;
+
+    // ======================================
+    // ASSIGNED DATE
+    // USE EARLIEST ASSIGNMENT/START DATE
+    // ======================================
+
+    const assignedDates = complaints
+      .map((complaint) => complaint.startedAt)
+      .filter(Boolean)
+      .map((date) => new Date(date));
+
+    const assignedDate =
+      assignedDates.length > 0
+        ? new Date(Math.min(...assignedDates.map((date) => date.getTime())))
+        : new Date();
+
+    // ======================================
+    // CREATE JOB CARD
+    // ======================================
+
+    const jobCard = await JobCard.create({
+      jobCardId,
+
+      hostel: firstLocation.type === "HOSTEL" ? firstLocation.original : "",
+
+      block: firstLocation.type === "BLOCK" ? firstLocation.original : "",
+
+      category: firstComplaint.category,
+
+      assignedWorker: firstComplaint.assignedTo._id,
+
+      assignedBy: req.user._id,
+
+      assignedDate,
+
+      complaints: complaintItems,
+
+      totalComplaints: complaintItems.length,
+
+      completedComplaints: 0,
+
+      status: waitingMaterial ? "WAITING_MATERIAL" : "IN_PROGRESS",
+
+      workerStatus: waitingMaterial ? "WAITING_MATERIAL" : "WORKING",
+
+      priority: highestPriority,
+
+      startedAt: assignedDate,
+
+      isCompleted: false,
+
+      movedToHistory: false,
+    });
+
+    // ======================================
+    // POPULATE FINAL CARD
+    // ======================================
+
+    await jobCard.populate([
+      {
+        path: "complaints.complaint",
+
+        populate: {
+          path: "createdBy",
+
+          select: "name email phone",
+        },
+      },
+
+      {
+        path: "complaints.materialRequest",
+
+        select: `
+          requestId
+          materials
+          reason
+          status
+          storeSlipNo
+          approvedByStore
+          issuedBy
+          approvedAt
+          issuedAt
+        `,
+      },
+
+      {
+        path: "assignedWorker",
+
+        select: "name phone department shift status",
+      },
+
+      {
+        path: "assignedBy",
+
+        select: "name role",
+      },
+    ]);
+
+    // ======================================
+    // RESPONSE
+    // ======================================
+
+    return res.status(201).json({
+      success: true,
+
+      message: "Job Card created successfully",
+
+      jobCard,
+    });
+  } catch (error) {
+    console.log("CREATE JOB CARD ERROR:", error);
+
+    console.log(error.stack);
+
+    return res.status(500).json({
+      success: false,
+
+      message: error.message || "Failed to create Job Card",
+    });
+  }
+};
 // ==========================================
 // GET ALL JOB CARDS
 // ==========================================
@@ -60,6 +521,22 @@ exports.getAllJobCards = async (req, res) => {
     createdAt
     startedAt
   `,
+      })
+
+      .populate({
+        path: "complaints.materialRequest",
+
+        select: `
+          requestId
+          materials
+          reason
+          status
+          storeSlipNo
+          approvedByStore
+          issuedBy
+          approvedAt
+          issuedAt
+        `,
       })
 
       // ======================================
@@ -163,6 +640,25 @@ exports.getSingleJobCard = async (req, res) => {
       })
 
       // ======================================
+      // MATERIAL REQUEST DETAILS
+      // ======================================
+
+      .populate({
+        path: "complaints.materialRequest",
+
+        select: `
+          requestId
+          materials
+          reason
+          status
+          storeSlipNo
+          approvedByStore
+          issuedBy
+          approvedAt
+          issuedAt
+        `,
+      })
+      // ======================================
       // WORKER
       // ======================================
 
@@ -176,6 +672,10 @@ exports.getSingleJobCard = async (req, res) => {
       shift
       status
     `,
+      })
+      .populate({
+        path: "assignedBy",
+        select: "name role",
       });
 
     // ======================================
@@ -271,10 +771,7 @@ exports.updateJobStatus = async (req, res) => {
     if (status === "IN_PROGRESS") {
       jobCard.workerStatus = "WORKING";
       complaintItem.status = "IN_PROGRESS";
-
       complaintItem.startedAt = new Date();
-
-      jobCard.workerStatus = "WORKING";
     }
 
     // ======================================
@@ -283,14 +780,9 @@ exports.updateJobStatus = async (req, res) => {
 
     if (status === "WAITING_MATERIAL") {
       jobCard.workerStatus = "WAITING_MATERIAL";
-
       complaintItem.status = "WAITING_MATERIAL";
-
       complaintItem.materialRequired = true;
-
       complaintItem.materialStatus = "PENDING";
-
-      jobCard.workerStatus = "WAITING_MATERIAL";
     }
 
     // ======================================
@@ -310,21 +802,6 @@ exports.updateJobStatus = async (req, res) => {
         jobCard.workerStatus = "COMPLETED";
         jobCard.completedAt = new Date();
         jobCard.isCompleted = true;
-
-        if (jobCard.assignedWorker) {
-          const worker = await User.findById(jobCard.assignedWorker);
-
-          if (worker) {
-            const activeJobs = await JobCard.countDocuments({
-              assignedWorker: worker._id,
-              isCompleted: false,
-            });
-
-            worker.status = activeJobs >= 10 ? "BUSY" : "ACTIVE";
-
-            await worker.save();
-          }
-        }
       }
     }
 
@@ -349,24 +826,6 @@ exports.updateJobStatus = async (req, res) => {
       }
 
       await complaint.save();
-
-      // ====================================
-      // SEND NOTIFICATION
-      // ====================================
-
-      await sendNotification({
-        receiver: complaint.createdBy,
-
-        sender: req.user._id,
-
-        title: "Complaint Status Updated",
-
-        message: `Your complaint status is now ${status}`,
-
-        type: "STATUS_UPDATE",
-
-        relatedComplaint: complaint._id,
-      });
     }
 
     // ======================================

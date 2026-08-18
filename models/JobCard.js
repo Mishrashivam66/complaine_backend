@@ -167,17 +167,15 @@ const jobCardSchema = new mongoose.Schema(
     // ==========================================
     // LOCATION DETAILS
     // ==========================================
-
     hostel: {
       type: String,
-      required: true,
+      default: "",
     },
 
     block: {
       type: String,
       default: "",
     },
-
     category: {
       type: String,
       required: true,
@@ -474,7 +472,14 @@ jobCardSchema.virtual("floorsCovered").get(function () {
 
   return floors;
 });
+jobCardSchema.pre("validate", function () {
+  const hostel = this.hostel?.trim();
+  const block = this.block?.trim();
 
+  if (!hostel && !block) {
+    this.invalidate("hostel", "Hostel or Block location is required");
+  }
+});
 // ==========================================
 // EXPORT
 // ==========================================
