@@ -6,11 +6,6 @@ const dotenv = require("dotenv");
 
 const http = require("http");
 
-// ==========================================
-// SOCKET
-// ==========================================
-
-const { initSocket } = require("./sockets/socket");
 
 // ==========================================
 // DATABASE
@@ -294,12 +289,6 @@ app.use((err, req, res, next) => {
 // ==========================================
 
 const server = http.createServer(app);
-
-// ==========================================
-// INITIALIZE SOCKET
-// ==========================================
-
-initSocket(server);
 // ==========================================
 // START OVERDUE CHECKER
 // ==========================================
