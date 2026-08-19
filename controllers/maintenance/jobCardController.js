@@ -850,3 +850,35 @@ exports.deleteJobCard = async (req, res) => {
     });
   }
 };
+
+exports.markJobCardPrinted = async (req, res) => {
+  try {
+    const jobCard = await JobCard.findById(req.params.id);
+
+    if (!jobCard) {
+      return res.status(404).json({
+        success: false,
+        message: "Job Card not found",
+      });
+    }
+
+    jobCard.printStatus = "PRINTED";
+    jobCard.printedAt = new Date();
+    jobCard.printedBy = req.user._id;
+
+    await jobCard.save();
+
+    return res.status(200).json({
+      success: true,
+      message: "Job Card marked as printed",
+      jobCard,
+    });
+  } catch (error) {
+    console.log("MARK JOB CARD PRINTED ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: "Failed to mark Job Card as printed",
+    });
+  }
+};

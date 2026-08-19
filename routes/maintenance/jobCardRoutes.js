@@ -12,6 +12,7 @@ const {
   getSingleJobCard,
   updateJobStatus,
   deleteJobCard,
+  markJobCardPrinted,
 } = require("../../controllers/maintenance/jobCardController");
 
 // ==========================================
@@ -78,6 +79,7 @@ router.delete(
   deleteJobCard,
 );
 
+router.put("/:id/mark-printed", protect, jobCardController.markJobCardPrinted);
 // ==========================================
 // EXPORT
 // ==========================================
