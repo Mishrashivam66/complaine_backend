@@ -79,7 +79,7 @@ router.delete(
   deleteJobCard,
 );
 
-router.put("/:id/mark-printed", protect, jobCardController.markJobCardPrinted);
+router.put("/:id/mark-printed", protect, markJobCardPrinted);
 // ==========================================
 // EXPORT
 // ==========================================
