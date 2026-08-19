@@ -138,22 +138,6 @@ const complaintItemSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
-    printStatus: {
-      type: String,
-      enum: ["PENDING", "PRINTED"],
-      default: "PENDING",
-    },
-
-    printedAt: {
-      type: Date,
-      default: null,
-    },
-
-    printedBy: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: "User",
-      default: null,
-    },
   },
   {
     _id: false,
@@ -393,6 +377,40 @@ const jobCardSchema = new mongoose.Schema(
       },
     ],
 
+    // ==========================================
+    // PRINT WORKFLOW
+    // ==========================================
+
+    printStatus: {
+      type: String,
+      enum: ["PENDING", "PRINTED"],
+      default: "PENDING",
+    },
+
+    printedAt: {
+      type: Date,
+      default: null,
+    },
+
+    printedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    // ==========================================
+    // ACTIVE / HISTORY
+    // ==========================================
+
+    isCompleted: {
+      type: Boolean,
+      default: false,
+    },
+
+    movedToHistory: {
+      type: Boolean,
+      default: false,
+    },
     // ==========================================
     // ACTIVE / HISTORY
     // ==========================================
