@@ -8,10 +8,9 @@ const router = express.Router();
 
 const {
   getComplaintsForAssignment,
-
   getWorkers,
-
   assignWorker,
+  updateMaterialDecision,
 } = require("../../controllers/maintenance/assignWorkerController");
 
 // ==========================================
@@ -71,6 +70,16 @@ router.put(
   ...managerAccess,
 
   assignWorker,
+);
+
+// ==========================================
+// UPDATE MATERIAL DECISION
+// ==========================================
+
+router.put(
+  "/material-decision/:complaintId",
+  ...managerAccess,
+  updateMaterialDecision,
 );
 
 // ==========================================

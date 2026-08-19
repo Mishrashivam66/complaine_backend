@@ -117,15 +117,11 @@ const complaintSchema = new mongoose.Schema(
 
       enum: [
         "PENDING",
-
         "ASSIGNED",
-
         "IN_PROGRESS",
-
+        "WAITING_MATERIAL",
         "RESOLVED",
-
         "CLOSED",
-
         "REOPENED",
       ],
 
@@ -209,6 +205,13 @@ const complaintSchema = new mongoose.Schema(
     // ==========================================
     // USER DETAILS
     // ==========================================
+    materialDecision: {
+      type: String,
+
+      enum: ["PENDING", "REQUIRED", "NOT_REQUIRED"],
+
+      default: "PENDING",
+    },
 
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,

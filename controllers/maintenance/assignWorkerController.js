@@ -1,8 +1,6 @@
 const Complaint = require("../../models/Complaint");
 
 const User = require("../../models/User");
-
-const JobCard = require("../../models/JobCard");
 const Category = require("../../models/Category");
 const sendNotification = require("../../utils/sendNotification");
 
@@ -199,19 +197,15 @@ exports.assignWorker = async (req, res) => {
 
     complaint.startedAt = new Date();
 
+    // Material decision not taken yet
+    complaint.materialDecision = "PENDING";
+    complaint.materialRequired = false;
+
     await complaint.save();
 
     // ======================================
     // CREATE / UPDATE JOBCARD
     // ======================================
-
-    let existingJobCard = await JobCard.findOne({
-      hostel: complaint.hostel,
-      category: complaint.category,
-      assignedWorker: worker._id,
-      isCompleted: false,
-      totalComplaints: { $lt: 10 },
-    });
 
     if (!existingJobCard) {
       await JobCard.create({
@@ -353,6 +347,89 @@ exports.assignWorker = async (req, res) => {
       success: false,
       message: error.message,
       stack: error.stack,
+    });
+  }
+};
+
+// ==========================================
+// UPDATE MATERIAL DECISION
+// ==========================================
+
+exports.updateMaterialDecision = async (req, res) => {
+  try {
+    const { complaintId } = req.params;
+
+    const { decision } = req.body;
+
+    // ======================================
+    // VALIDATION
+    // ======================================
+
+    if (!["REQUIRED", "NOT_REQUIRED"].includes(decision)) {
+      return res.status(400).json({
+        success: false,
+        message: "Invalid material decision",
+      });
+    }
+
+    // ======================================
+    // FIND COMPLAINT
+    // ======================================
+
+    const complaint = await Complaint.findById(complaintId);
+
+    if (!complaint) {
+      return res.status(404).json({
+        success: false,
+        message: "Complaint not found",
+      });
+    }
+
+    // ======================================
+    // MUST BE ASSIGNED FIRST
+    // ======================================
+
+    if (!complaint.assignedTo) {
+      return res.status(400).json({
+        success: false,
+        message: "Assign a worker before selecting material requirement",
+      });
+    }
+
+    // ======================================
+    // SAVE DECISION
+    // ======================================
+
+    complaint.materialDecision = decision;
+
+    if (decision === "REQUIRED") {
+      complaint.materialRequired = true;
+    }
+
+    if (decision === "NOT_REQUIRED") {
+      complaint.materialRequired = false;
+    }
+
+    await complaint.save();
+
+    // ======================================
+    // RESPONSE
+    // ======================================
+
+    return res.status(200).json({
+      success: true,
+
+      message:
+        decision === "REQUIRED" ? "Material required" : "Material not required",
+
+      complaint,
+    });
+  } catch (error) {
+    console.log("UPDATE MATERIAL DECISION ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+      message: error.message || "Failed to update material decision",
     });
   }
 };
