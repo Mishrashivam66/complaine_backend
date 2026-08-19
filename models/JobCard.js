@@ -79,11 +79,6 @@ const complaintItemSchema = new mongoose.Schema(
       default: null,
     },
 
-    materialStatus: {
-      type: String,
-      enum: ["NOT_REQUIRED", "PENDING", "APPROVED", "ISSUED", "REJECTED"],
-      default: "NOT_REQUIRED",
-    },
     storeSlipNo: {
       type: String,
       default: "",

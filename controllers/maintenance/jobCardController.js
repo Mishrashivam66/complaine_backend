@@ -233,32 +233,6 @@ exports.createJobCard = async (req, res) => {
     });
 
     // ======================================
-    // MATERIAL STATUS MAPPER
-    // ======================================
-
-    const getMaterialStatus = (request) => {
-      if (!request) {
-        return "NOT_REQUIRED";
-      }
-
-      switch (request.status) {
-        case "ISSUED":
-          return "ISSUED";
-
-        case "APPROVED_BY_STORE":
-        case "PARTIALLY_APPROVED":
-        case "PARTIALLY_ISSUED":
-          return "APPROVED";
-
-        case "REJECTED":
-          return "REJECTED";
-
-        default:
-          return "PENDING";
-      }
-    };
-
-    // ======================================
     // CREATE COMPLAINT ITEMS
     // ======================================
 
@@ -269,15 +243,6 @@ exports.createJobCard = async (req, res) => {
 
       let itemStatus =
         complaint.status === "IN_PROGRESS" ? "IN_PROGRESS" : "ASSIGNED";
-
-      if (
-        materialRequest &&
-        ["PENDING", "PARTIALLY_APPROVED", "OUT_OF_STOCK"].includes(
-          materialRequest.status,
-        )
-      ) {
-        itemStatus = "WAITING_MATERIAL";
-      }
 
       return {
         serialNumber: index + 1,
@@ -305,10 +270,6 @@ exports.createJobCard = async (req, res) => {
         materialRequired,
 
         materialRequest: materialRequest?._id || null,
-
-        materialStatus: getMaterialStatus(materialRequest),
-
-        storeSlipNo: materialRequest?.storeSlipNo || "",
       };
     });
 
@@ -331,15 +292,6 @@ exports.createJobCard = async (req, res) => {
         : highest;
     }, "LOW");
 
-    // ======================================
-    // FLOWS WAITING FOR MATERIAL?
-    // ======================================
-
-    const waitingMaterial = complaintItems.some(
-      (item) => item.status === "WAITING_MATERIAL",
-    );
-
-    // ======================================
     // JOB ID
     // ======================================
 
@@ -387,9 +339,9 @@ exports.createJobCard = async (req, res) => {
 
       completedComplaints: 0,
 
-      status: waitingMaterial ? "WAITING_MATERIAL" : "IN_PROGRESS",
+      status: "IN_PROGRESS",
 
-      workerStatus: waitingMaterial ? "WAITING_MATERIAL" : "WORKING",
+      workerStatus: "WORKING",
 
       priority: highestPriority,
 
@@ -422,12 +374,6 @@ exports.createJobCard = async (req, res) => {
           requestId
           materials
           reason
-          status
-          storeSlipNo
-          approvedByStore
-          issuedBy
-          approvedAt
-          issuedAt
         `,
       },
 
@@ -527,16 +473,10 @@ exports.getAllJobCards = async (req, res) => {
         path: "complaints.materialRequest",
 
         select: `
-          requestId
-          materials
-          reason
-          status
-          storeSlipNo
-          approvedByStore
-          issuedBy
-          approvedAt
-          issuedAt
-        `,
+    requestId
+    materials
+    reason
+  `,
       })
 
       // ======================================
@@ -562,10 +502,6 @@ exports.getAllJobCards = async (req, res) => {
       .sort({
         createdAt: -1,
       });
-    console.log(
-      "FIRST JOB CARD =>",
-      JSON.stringify(jobCards[0]?.complaints, null, 2),
-    );
 
     // ======================================
     // RESPONSE
@@ -647,16 +583,10 @@ exports.getSingleJobCard = async (req, res) => {
         path: "complaints.materialRequest",
 
         select: `
-          requestId
-          materials
-          reason
-          status
-          storeSlipNo
-          approvedByStore
-          issuedBy
-          approvedAt
-          issuedAt
-        `,
+    requestId
+    materials
+    reason
+  `,
       })
       // ======================================
       // WORKER
@@ -739,7 +669,7 @@ exports.updateJobStatus = async (req, res) => {
 
     const { id } = req.params;
 
-    const { complaintId, status, remarks } = req.body;
+    const { complaintId, status } = req.body;
 
     // ======================================
     // FIND JOB CARD
@@ -769,20 +699,23 @@ exports.updateJobStatus = async (req, res) => {
     // ======================================
 
     if (status === "IN_PROGRESS") {
-      jobCard.workerStatus = "WORKING";
       complaintItem.status = "IN_PROGRESS";
       complaintItem.startedAt = new Date();
+
+      jobCard.status = "IN_PROGRESS";
+      jobCard.workerStatus = "WORKING";
     }
 
     // ======================================
-    // MATERIAL REQUIRED
+    // WAITING MATERIAL
     // ======================================
 
     if (status === "WAITING_MATERIAL") {
-      jobCard.workerStatus = "WAITING_MATERIAL";
       complaintItem.status = "WAITING_MATERIAL";
       complaintItem.materialRequired = true;
-      complaintItem.materialStatus = "PENDING";
+
+      jobCard.status = "WAITING_MATERIAL";
+      jobCard.workerStatus = "WAITING_MATERIAL";
     }
 
     // ======================================
@@ -791,17 +724,35 @@ exports.updateJobStatus = async (req, res) => {
 
     if (status === "COMPLETED") {
       complaintItem.status = "COMPLETED";
-
       complaintItem.completedAt = new Date();
 
-      const allCompleted = jobCard.complaints.every(
+      const completedCount = jobCard.complaints.filter(
         (item) => item.status === "COMPLETED",
-      );
+      ).length;
 
-      if (allCompleted) {
+      jobCard.completedComplaints = completedCount;
+
+      // ====================================
+      // ALL COMPLAINTS COMPLETED
+      // ====================================
+
+      if (completedCount === jobCard.complaints.length) {
+        jobCard.status = "COMPLETED";
         jobCard.workerStatus = "COMPLETED";
+
         jobCard.completedAt = new Date();
+
         jobCard.isCompleted = true;
+      }
+
+      // ====================================
+      // SOME COMPLAINTS COMPLETED
+      // ====================================
+      else {
+        jobCard.status = "PARTIALLY_COMPLETED";
+        jobCard.workerStatus = "WORKING";
+
+        jobCard.isCompleted = false;
       }
     }
 
