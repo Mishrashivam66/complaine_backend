@@ -8,7 +8,6 @@ const translate = require("translate-google");
 // 24 HOUR DEADLINE
 // ==========================================
 
-const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
 
 // ==========================================
 // CREATE COMPLAINT
@@ -26,12 +25,120 @@ const technicalTerms = {
   "Wash Basin": "वॉश बेसिन",
   "Door Lock": "दरवाज़े का ताला",
 };
-
 const createComplaint = async (req, res) => {
   try {
     // ======================================
-    // CREATE COMPLAINT
+    // GET STUDENT FROM DATABASE
     // ======================================
+
+    const student = await User.findById(req.user.id).select(
+      "name role isHosteller hostel roomNumber block department",
+    );
+
+    if (!student) {
+      return res.status(404).json({
+        success: false,
+        message: "Student profile not found",
+      });
+    }
+
+    // ======================================
+    // HOSTELLER / DAY SCHOLAR CHECK
+    // ======================================
+
+    const isHosteller = student.isHosteller === true;
+
+    const complaintArea = String(
+      req.body.complaintArea || (isHosteller ? "HOSTEL" : "DEPARTMENT"),
+    ).toUpperCase();
+
+    // ======================================
+    // DAY SCHOLAR RESTRICTION
+    // ======================================
+
+    if (!isHosteller && complaintArea !== "DEPARTMENT") {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Day scholars can raise complaints only for their own department.",
+      });
+    }
+
+    // ======================================
+    // DAY SCHOLAR PROFILE VALIDATION
+    // ======================================
+
+    if (!isHosteller) {
+      if (!student.department || !student.block) {
+        return res.status(400).json({
+          success: false,
+          message:
+            "Your department or block is not assigned. Please contact administrator.",
+        });
+      }
+    }
+
+    // ======================================
+    // SAFE COMPLAINT DATA
+    // ======================================
+
+    const complaintData = {
+      ...req.body,
+      complaintArea,
+    };
+
+    // ======================================
+    // DAY SCHOLAR
+    // ======================================
+
+    if (!isHosteller) {
+      complaintData.complaintArea = "DEPARTMENT";
+
+      // Always use database profile values
+      complaintData.department = student.department;
+      complaintData.block = student.block;
+
+      // Day Scholar has no hostel fields
+      complaintData.hostel = "";
+      complaintData.roomNumber = "";
+
+      // Time is only for hostel complaints
+      delete complaintData.availableFrom;
+      delete complaintData.availableTo;
+    }
+
+    // ======================================
+    // HOSTELLER - HOSTEL COMPLAINT
+    // ======================================
+    else if (complaintArea === "HOSTEL") {
+      complaintData.hostel = student.hostel;
+      complaintData.roomNumber = student.roomNumber || "";
+
+      // Block from student profile
+      complaintData.block = student.block || "";
+    }
+
+    // ======================================
+    // HOSTELLER - DEPARTMENT COMPLAINT
+    // ======================================
+    else if (complaintArea === "DEPARTMENT") {
+      complaintData.department = student.department;
+      complaintData.block = student.block;
+
+      // No timing for department complaint
+      delete complaintData.availableFrom;
+      delete complaintData.availableTo;
+    }
+
+    // ======================================
+    // CAMPUS COMPLAINT
+    // ======================================
+    else if (complaintArea === "CAMPUS") {
+      // Campus complaint doesn't need hostel timing
+      delete complaintData.availableFrom;
+      delete complaintData.availableTo;
+    }
+
     // ======================================
     // AUTO TRANSLATE TO HINDI
     // ======================================
@@ -40,14 +147,14 @@ const createComplaint = async (req, res) => {
     let descriptionHindi = "";
 
     try {
-      if (req.body.title) {
-        titleHindi = await translate(req.body.title, {
+      if (complaintData.title) {
+        titleHindi = await translate(complaintData.title, {
           to: "hi",
         });
       }
 
-      if (req.body.description) {
-        descriptionHindi = await translate(req.body.description, {
+      if (complaintData.description) {
+        descriptionHindi = await translate(complaintData.description, {
           to: "hi",
         });
       }
@@ -59,12 +166,22 @@ const createComplaint = async (req, res) => {
     // TECHNICAL TERM OVERRIDE
     // ======================================
 
-    if (technicalTerms[req.body.title]) {
-      titleHindi = technicalTerms[req.body.title];
+    if (technicalTerms[complaintData.title]) {
+      titleHindi = technicalTerms[complaintData.title];
     }
 
+    // ======================================
+    // 24 HOUR DEADLINE
+    // ======================================
+
+    const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
+
+    // ======================================
+    // CREATE COMPLAINT
+    // ======================================
+
     const complaint = await Complaint.create({
-      ...req.body,
+      ...complaintData,
 
       titleHindi,
 
@@ -102,11 +219,7 @@ const createComplaint = async (req, res) => {
         relatedComplaint: complaint._id,
       });
     } catch (notificationError) {
-      console.log(
-        "Student Notification Error:",
-
-        notificationError.message,
-      );
+      console.log("Student Notification Error:", notificationError.message);
     }
 
     // ======================================
@@ -118,7 +231,7 @@ const createComplaint = async (req, res) => {
     });
 
     // ======================================
-    // SEND TO MANAGERS
+    // SEND NOTIFICATION TO MANAGERS
     // ======================================
 
     if (managers.length > 0) {
@@ -133,7 +246,9 @@ const createComplaint = async (req, res) => {
 
             title: "New Complaint",
 
-            message: `${req.user.name} created a new complaint for ${complaint.subCategory}`,
+            message: `${
+              student.name || "Student"
+            } created a new complaint for ${complaint.subCategory}`,
 
             type: "COMPLAINT",
 
@@ -144,31 +259,27 @@ const createComplaint = async (req, res) => {
         } catch (managerNotificationError) {
           console.log(
             "Manager Notification Error:",
-
             managerNotificationError.message,
           );
         }
       }
     }
 
-    const io = getIO();
-
-    io.emit("complaintUpdated");
     // ======================================
-    // RESPONSE
+    // SUCCESS RESPONSE
     // ======================================
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
 
-      message: "Complaint created successfully",
+      message: "Complaint submitted successfully",
 
       complaint,
     });
   } catch (error) {
-    console.log(error);
+    console.log("Create Complaint Error:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
 
       message: error.message,
@@ -207,10 +318,6 @@ const getAllComplaints = async (req, res) => {
     });
   }
 };
-
-// ==========================================
-// GET MY COMPLAINTS
-// ==========================================
 
 // ==========================================
 // GET MY COMPLAINTS
