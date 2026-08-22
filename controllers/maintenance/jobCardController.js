@@ -1,8 +1,7 @@
 const JobCard = require("../../models/JobCard");
-
 const Complaint = require("../../models/Complaint");
-
 const MaterialRequest = require("../../models/MaterialRequest");
+const User = require("../../models/User");
 // ==========================================
 // CREATE GROUPED JOB CARD
 // ==========================================
@@ -769,7 +768,8 @@ exports.updateJobStatus = async (req, res) => {
 
     if (complaint) {
       if (status === "COMPLETED") {
-        complaint.status = "RESOLVED";
+        complaint.status = "COMPLETED";
+        complaint.completedAt = new Date();
       } else if (status === "WAITING_MATERIAL") {
         complaint.status = "WAITING_MATERIAL";
       } else {
@@ -879,6 +879,255 @@ exports.markJobCardPrinted = async (req, res) => {
     return res.status(500).json({
       success: false,
       message: "Failed to mark Job Card as printed",
+    });
+  }
+};
+
+// ==========================================
+// VERIFY + COMPLETE SELECTED COMPLAINTS
+// MAINTENANCE MANAGER VERIFICATION PAGE
+// ==========================================
+
+exports.completeSelectedComplaints = async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { complaintIds } = req.body;
+
+    // ======================================
+    // VALIDATION
+    // ======================================
+
+    if (!Array.isArray(complaintIds) || complaintIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Please select at least one complaint",
+      });
+    }
+
+    // ======================================
+    // REMOVE DUPLICATE IDS
+    // ======================================
+
+    const uniqueComplaintIds = [
+      ...new Set(complaintIds.map((complaintId) => complaintId.toString())),
+    ];
+
+    // ======================================
+    // FIND JOB CARD
+    // ======================================
+
+    const jobCard = await JobCard.findById(id);
+
+    if (!jobCard) {
+      return res.status(404).json({
+        success: false,
+        message: "Job Card not found",
+      });
+    }
+
+    // ======================================
+    // ONLY PRINTED JOB CARD CAN BE VERIFIED
+    // ======================================
+
+    if (jobCard.printStatus !== "PRINTED") {
+      return res.status(400).json({
+        success: false,
+        message: "Only printed Job Cards can be verified",
+      });
+    }
+
+    // ======================================
+    // CHECK COMPLAINTS BELONG TO THIS JOB CARD
+    // ======================================
+
+    const selectedItems = jobCard.complaints.filter((item) =>
+      uniqueComplaintIds.includes(item.complaint.toString()),
+    );
+
+    if (selectedItems.length !== uniqueComplaintIds.length) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "One or more selected complaints do not belong to this Job Card",
+      });
+    }
+
+    // ======================================
+    // ONLY NEWLY COMPLETED COMPLAINTS
+    // IMPORTANT:
+    // prevents worker.currentJobs from
+    // decreasing twice
+    // ======================================
+
+    const newlyCompletedIds = selectedItems
+      .filter((item) => String(item.status).toUpperCase() !== "COMPLETED")
+      .map((item) => item.complaint.toString());
+
+    if (newlyCompletedIds.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: "Selected complaints are already completed",
+      });
+    }
+
+    const now = new Date();
+
+    // ======================================
+    // UPDATE COMPLAINTS INSIDE JOB CARD
+    // ======================================
+
+    jobCard.complaints.forEach((item) => {
+      const complaintId = item.complaint.toString();
+
+      if (newlyCompletedIds.includes(complaintId)) {
+        item.status = "COMPLETED";
+
+        item.completedAt = now;
+      }
+    });
+
+    // ======================================
+    // UPDATE ORIGINAL COMPLAINT COLLECTION
+    // THIS WILL UPDATE STUDENT/MM/WORKER UI
+    // ======================================
+
+    await Complaint.updateMany(
+      {
+        _id: {
+          $in: newlyCompletedIds,
+        },
+      },
+      {
+        $set: {
+          status: "COMPLETED",
+
+          completedAt: now,
+        },
+      },
+    );
+
+    // ======================================
+    // CALCULATE COMPLETED COUNT
+    // ======================================
+
+    const completedCount = jobCard.complaints.filter(
+      (item) => item.status === "COMPLETED",
+    ).length;
+
+    jobCard.completedComplaints = completedCount;
+
+    // ======================================
+    // ALL COMPLAINTS COMPLETED
+    // ======================================
+
+    if (completedCount === jobCard.complaints.length) {
+      jobCard.status = "COMPLETED";
+
+      jobCard.workerStatus = "COMPLETED";
+
+      jobCard.isCompleted = true;
+
+      jobCard.completedAt = now;
+    }
+
+    // ======================================
+    // PARTIALLY COMPLETED
+    // ======================================
+    else {
+      jobCard.status = "PARTIALLY_COMPLETED";
+
+      jobCard.workerStatus = "WORKING";
+
+      jobCard.isCompleted = false;
+    }
+
+    // ======================================
+    // UPDATE WORKER CURRENT JOB COUNT
+    // ======================================
+
+    if (jobCard.assignedWorker) {
+      const worker = await User.findById(jobCard.assignedWorker);
+
+      if (worker) {
+        worker.currentJobs = Math.max(
+          0,
+
+          (worker.currentJobs || 0) - newlyCompletedIds.length,
+        );
+
+        worker.status = worker.currentJobs >= 10 ? "BUSY" : "ACTIVE";
+
+        await worker.save();
+      }
+    }
+
+    // ======================================
+    // SAVE JOB CARD
+    // ======================================
+
+    await jobCard.save();
+
+    // ======================================
+    // POPULATE RESPONSE
+    // ======================================
+
+    await jobCard.populate([
+      {
+        path: "complaints.complaint",
+
+        populate: {
+          path: "createdBy",
+
+          select: "name email phone",
+        },
+      },
+
+      {
+        path: "complaints.materialRequest",
+
+        select: `
+          requestId
+          materials
+          reason
+        `,
+      },
+
+      {
+        path: "assignedWorker",
+
+        select: "name phone department shift status currentJobs",
+      },
+
+      {
+        path: "assignedBy",
+
+        select: "name role",
+      },
+    ]);
+
+    // ======================================
+    // SUCCESS RESPONSE
+    // ======================================
+
+    return res.status(200).json({
+      success: true,
+
+      message: `${newlyCompletedIds.length} complaint${
+        newlyCompletedIds.length !== 1 ? "s" : ""
+      } marked completed`,
+
+      completedCount: newlyCompletedIds.length,
+
+      jobCard,
+    });
+  } catch (error) {
+    console.log("COMPLETE SELECTED COMPLAINTS ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+
+      message: error.message || "Failed to complete selected complaints",
     });
   }
 };

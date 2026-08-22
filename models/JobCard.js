@@ -1,4 +1,9 @@
 const mongoose = require("mongoose");
+
+// ==========================================
+// COMPLAINT ITEM SCHEMA
+// ==========================================
+
 const complaintItemSchema = new mongoose.Schema(
   {
     complaint: {
@@ -6,6 +11,7 @@ const complaintItemSchema = new mongoose.Schema(
       ref: "Complaint",
       required: true,
     },
+
     serialNumber: {
       type: Number,
       default: 1,
@@ -58,7 +64,6 @@ const complaintItemSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ✅ NEW
     completedAt: {
       type: Date,
       default: null,
@@ -124,6 +129,7 @@ const complaintItemSchema = new mongoose.Schema(
       type: Date,
       default: null,
     },
+
     workerRemarks: {
       type: String,
       default: "",
@@ -143,6 +149,7 @@ const complaintItemSchema = new mongoose.Schema(
     _id: false,
   },
 );
+
 // ==========================================
 // JOB CARD SCHEMA
 // ==========================================
@@ -162,6 +169,7 @@ const jobCardSchema = new mongoose.Schema(
     // ==========================================
     // LOCATION DETAILS
     // ==========================================
+
     hostel: {
       type: String,
       default: "",
@@ -171,6 +179,7 @@ const jobCardSchema = new mongoose.Schema(
       type: String,
       default: "",
     },
+
     category: {
       type: String,
       required: true,
@@ -203,11 +212,14 @@ const jobCardSchema = new mongoose.Schema(
 
     complaints: {
       type: [complaintItemSchema],
+
       validate: {
         validator: function (value) {
           return value.length > 0 && value.length <= 10;
         },
+
         message: "One Job Card can contain maximum 10 complaints.",
+
         required: true,
       },
     },
@@ -221,12 +233,14 @@ const jobCardSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+
     // ==========================================
     // JOB STATUS
     // ==========================================
 
     status: {
       type: String,
+
       enum: [
         "CREATED",
         "ASSIGNED",
@@ -237,6 +251,7 @@ const jobCardSchema = new mongoose.Schema(
         "COMPLETED",
         "CLOSED",
       ],
+
       default: "ASSIGNED",
     },
 
@@ -246,7 +261,9 @@ const jobCardSchema = new mongoose.Schema(
 
     workerStatus: {
       type: String,
+
       enum: ["NOT_STARTED", "WORKING", "WAITING_MATERIAL", "COMPLETED"],
+
       default: "NOT_STARTED",
     },
 
@@ -256,7 +273,9 @@ const jobCardSchema = new mongoose.Schema(
 
     jobType: {
       type: String,
+
       enum: ["CORRECTIVE", "PREVENTIVE", "BREAKDOWN", "EMERGENCY"],
+
       default: "CORRECTIVE",
     },
 
@@ -266,7 +285,9 @@ const jobCardSchema = new mongoose.Schema(
 
     priority: {
       type: String,
+
       enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
+
       default: "MEDIUM",
     },
 
@@ -383,7 +404,9 @@ const jobCardSchema = new mongoose.Schema(
 
     printStatus: {
       type: String,
+
       enum: ["PENDING", "PRINTED"],
+
       default: "PENDING",
     },
 
@@ -394,23 +417,12 @@ const jobCardSchema = new mongoose.Schema(
 
     printedBy: {
       type: mongoose.Schema.Types.ObjectId,
+
       ref: "User",
+
       default: null,
     },
 
-    // ==========================================
-    // ACTIVE / HISTORY
-    // ==========================================
-
-    isCompleted: {
-      type: Boolean,
-      default: false,
-    },
-
-    movedToHistory: {
-      type: Boolean,
-      default: false,
-    },
     // ==========================================
     // ACTIVE / HISTORY
     // ==========================================
@@ -427,14 +439,21 @@ const jobCardSchema = new mongoose.Schema(
   },
   {
     timestamps: true,
-    toJSON: { virtuals: true },
-    toObject: { virtuals: true },
+
+    toJSON: {
+      virtuals: true,
+    },
+
+    toObject: {
+      virtuals: true,
+    },
   },
 );
 
 // ==========================================
 // INDEXES
 // ==========================================
+
 jobCardSchema.index({
   hostel: 1,
   category: 1,
@@ -447,41 +466,104 @@ jobCardSchema.index({
 });
 
 // ==========================================
-// VIRTUALS
+// AUTO CALCULATE JOB CARD STATUS
 // ==========================================
+
 jobCardSchema.pre("save", function () {
+  // ==========================================
+  // TOTAL COMPLAINTS
+  // ==========================================
+
   this.totalComplaints = this.complaints.length;
+
+  // ==========================================
+  // COMPLETED COMPLAINTS
+  // ==========================================
 
   this.completedComplaints = this.complaints.filter(
     (item) => item.status === "COMPLETED",
   ).length;
 
+  // ==========================================
+  // WAITING MATERIAL CHECK
+  // ==========================================
+
   const waitingMaterial = this.complaints.some(
     (item) => item.status === "WAITING_MATERIAL",
   );
 
+  // ==========================================
+  // ALL COMPLAINTS COMPLETED
+  // Verification page is final authority
+  // ==========================================
+
+  if (
+    this.totalComplaints > 0 &&
+    this.completedComplaints === this.totalComplaints
+  ) {
+    this.status = "COMPLETED";
+
+    this.workerStatus = "COMPLETED";
+
+    this.isCompleted = true;
+
+    if (!this.completedAt) {
+      this.completedAt = new Date();
+    }
+
+    return;
+  }
+
+  // ==========================================
+  // JOB IS STILL ACTIVE
+  // ==========================================
+
+  this.isCompleted = false;
+
+  // ==========================================
+  // WAITING MATERIAL
+  // ==========================================
+
   if (waitingMaterial) {
     this.status = "WAITING_MATERIAL";
-  } else if (
+
+    this.workerStatus = "WAITING_MATERIAL";
+
+    return;
+  }
+
+  // ==========================================
+  // PARTIALLY COMPLETED
+  // ==========================================
+
+  if (
     this.completedComplaints > 0 &&
     this.completedComplaints < this.totalComplaints
   ) {
     this.status = "PARTIALLY_COMPLETED";
-  } else if (
-    this.completedComplaints === this.totalComplaints &&
-    this.totalComplaints > 0
-  ) {
-    this.status = "READY_FOR_VERIFICATION";
-    this.completedAt = new Date();
+
+    this.workerStatus = "WORKING";
+
+    return;
   }
 });
+
+// ==========================================
+// PENDING COMPLAINTS VIRTUAL
+// ==========================================
 
 jobCardSchema.virtual("pendingComplaints").get(function () {
   return this.totalComplaints - this.completedComplaints;
 });
 
+// ==========================================
+// COMPLETION PERCENTAGE VIRTUAL
+// ==========================================
+
 jobCardSchema.virtual("completionPercentage").get(function () {
-  if (this.totalComplaints === 0) return 0;
+  if (this.totalComplaints === 0) {
+    return 0;
+  }
 
   return Math.round((this.completedComplaints / this.totalComplaints) * 100);
 });
@@ -501,16 +583,24 @@ jobCardSchema.virtual("floorsCovered").get(function () {
 
   return floors;
 });
+
+// ==========================================
+// LOCATION VALIDATION
+// HOSTEL OR BLOCK REQUIRED
+// ==========================================
+
 jobCardSchema.pre("validate", function () {
   const hostel = this.hostel?.trim();
+
   const block = this.block?.trim();
 
   if (!hostel && !block) {
     this.invalidate("hostel", "Hostel or Block location is required");
   }
 });
+
 // ==========================================
-// EXPORT
+// EXPORT MODEL
 // ==========================================
 
 module.exports = mongoose.model("JobCard", jobCardSchema);

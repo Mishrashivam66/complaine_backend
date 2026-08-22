@@ -120,6 +120,7 @@ const complaintSchema = new mongoose.Schema(
         "ASSIGNED",
         "IN_PROGRESS",
         "WAITING_MATERIAL",
+        "COMPLETED",
         "RESOLVED",
         "CLOSED",
         "REOPENED",
@@ -153,16 +154,18 @@ const complaintSchema = new mongoose.Schema(
     // ==========================================
     // WORK START & COMPLETION
     // ==========================================
-
     startedAt: {
       type: Date,
+      default: null,
+    },
 
+    completedAt: {
+      type: Date,
       default: null,
     },
 
     resolvedAt: {
       type: Date,
-
       default: null,
     },
 

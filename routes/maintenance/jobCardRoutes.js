@@ -13,6 +13,7 @@ const {
   updateJobStatus,
   deleteJobCard,
   markJobCardPrinted,
+  completeSelectedComplaints,
 } = require("../../controllers/maintenance/jobCardController");
 
 // ==========================================
@@ -79,6 +80,7 @@ router.delete(
   deleteJobCard,
 );
 
+router.put("/:id/complete-complaints", completeSelectedComplaints);
 router.put("/:id/mark-printed", protect, markJobCardPrinted);
 // ==========================================
 // EXPORT
