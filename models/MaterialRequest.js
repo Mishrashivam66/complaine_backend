@@ -20,7 +20,6 @@ const materialItemSchema = new mongoose.Schema(
 
     unit: {
       type: String,
-
       enum: [
         "PIECE",
         "METER",
@@ -35,7 +34,6 @@ const materialItemSchema = new mongoose.Schema(
         "PAIR",
         "OTHER",
       ],
-
       default: "PIECE",
     },
 
@@ -57,7 +55,6 @@ const materialItemSchema = new mongoose.Schema(
 
     status: {
       type: String,
-
       enum: [
         "PENDING",
         "APPROVED",
@@ -66,7 +63,6 @@ const materialItemSchema = new mongoose.Schema(
         "PARTIALLY_ISSUED",
         "ISSUED",
       ],
-
       default: "PENDING",
     },
 
@@ -86,6 +82,10 @@ const materialItemSchema = new mongoose.Schema(
 
 const materialRequestSchema = new mongoose.Schema(
   {
+    // ======================================
+    // REQUEST ID
+    // ======================================
+
     requestId: {
       type: String,
       unique: true,
@@ -218,7 +218,31 @@ const materialRequestSchema = new mongoose.Schema(
     },
   },
   {
+    // Automatically creates createdAt + updatedAt
     timestamps: true,
+  },
+);
+
+// ==========================================
+// AUTO DELETE AFTER 7 DAYS
+// ==========================================
+//
+// createdAt is automatically generated because
+// timestamps: true is enabled above.
+//
+// 7 days = 7 * 24 * 60 * 60
+//        = 604800 seconds
+//
+// MongoDB TTL will automatically delete the
+// complete MaterialRequest document after 7 days.
+// ==========================================
+
+materialRequestSchema.index(
+  {
+    createdAt: 1,
+  },
+  {
+    expireAfterSeconds: 604800,
   },
 );
 
