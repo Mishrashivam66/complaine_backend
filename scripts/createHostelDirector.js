@@ -38,3 +38,5 @@ const createHostelDirector = async () => {
 };
 
 createHostelDirector();
+
+// node scripts/createHostelDirector.js
