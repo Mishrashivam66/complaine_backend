@@ -63,7 +63,6 @@ const authRoutes = require("./routes/auth/authRoutes");
 // ADMIN
 const adminRoutes = require("./routes/admin/adminRoutes");
 const hostelAdminRoutes = require("./routes/admin/hostelRoutes");
-const wardenAdminRoutes = require("./routes/admin/wardenRoutes");
 const announcementRoutes = require("./routes/admin/announcementRoutes");
 const reportRoutes = require("./routes/admin/reportRoutes");
 const inventoryRoutes = require("./routes/admin/inventoryRoutes");
@@ -71,6 +70,9 @@ const auditLogRoutes = require("./routes/admin/auditLogRoutes");
 const dashboardRoutes = require("./routes/admin/dashboardRoutes");
 const rolePermissionRoutes = require("./routes/admin/rolePermissionRoutes");
 const complaintRoutes = require("./routes/admin/complaintRoutes");
+
+// HOSTEL DIRECTOR
+const hostelDirectorRoutes = require("./routes/hostelDirector/hostelDirectorRoutes");
 
 // MESS
 const messAnalyticsRoutes = require("./routes/mess/messAnalyticsRoutes");
@@ -113,8 +115,6 @@ app.use("/api/admin", adminRoutes);
 
 app.use("/api/admin/hostels", hostelAdminRoutes);
 
-app.use("/api/admin/wardens", wardenAdminRoutes);
-
 app.use("/api/announcements", announcementRoutes);
 
 app.use("/api/reports", reportRoutes);
@@ -128,6 +128,12 @@ app.use("/api/audit-logs", auditLogRoutes);
 app.use("/api/roles", rolePermissionRoutes);
 
 app.use("/api/dashboard", dashboardRoutes);
+
+// ==========================================
+// HOSTEL DIRECTOR ROUTES
+// ==========================================
+
+app.use("/api/hostel-director", hostelDirectorRoutes);
 
 // ==========================================
 // MESS ROUTES

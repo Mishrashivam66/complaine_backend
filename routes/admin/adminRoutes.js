@@ -13,7 +13,7 @@ const { createUser } = require("../../controllers/admin/createUserController");
 // ==========================================
 
 const studentRoutes = require("./studentRoutes");
-const wardenRoutes = require("./wardenRoutes");
+
 const userRoutes = require("./userRoutes");
 
 const locationRoutes = require("./locationRoutes");
@@ -29,21 +29,53 @@ const categoryRoutes = require("./categoryRoutes");
 const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 
 // ==========================================
-// ADMIN ONLY ACCESS
+// PROTECTED ROUTES
 // ==========================================
 
 router.use(protect);
 
-// categories route first
+// ==========================================
+// CATEGORY ROUTES
+// ==========================================
+
 router.use("/categories", categoryRoutes);
 
-// admin only routes
+// ==========================================
+// ADMIN ONLY ACCESS
+// ==========================================
+
 router.use(authorizeRoles("ADMIN", "SUPER_ADMIN"));
 
+// ==========================================
+// USER ROUTES
+// ==========================================
+
 router.use("/users", userRoutes);
-router.use("/wardens", wardenRoutes);
+
+// ==========================================
+// LOCATION ROUTES
+// ==========================================
+
 router.use("/locations", locationRoutes);
+
+// ==========================================
+// BUILDING ROUTES
+// ==========================================
+
 router.use("/buildings", buildingRoutes);
+
+// ==========================================
+// CREATE USER
+// ==========================================
+
+router.post("/create-user", createUser);
+
+// ==========================================
+// STUDENT ROUTES
+// ==========================================
+
+router.use("/students", studentRoutes);
+
 // ==========================================
 // TEST ROUTE
 // ==========================================
@@ -51,32 +83,9 @@ router.use("/buildings", buildingRoutes);
 router.get("/", (req, res) => {
   res.json({
     success: true,
-
     message: "Admin Route Working",
   });
 });
-router.use("/wardens", wardenRoutes);
-router.use("/locations", locationRoutes);
-router.use("/buildings", buildingRoutes);
-// ==========================================
-// CREATE USER
-// ==========================================
-
-router.post(
-  "/create-user",
-
-  createUser,
-);
-
-// ==========================================
-// STUDENT ROUTES
-// ==========================================
-
-router.use(
-  "/students",
-
-  studentRoutes,
-);
 
 // ==========================================
 // EXPORT ROUTER

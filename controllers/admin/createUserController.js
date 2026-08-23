@@ -1,116 +1,89 @@
 const User = require("../../models/User");
 
-const Category = require("../../models/Category");
-
 // ==========================================
-// CREATE USER
+// CREATE USER - ADMIN
 // ==========================================
 
 exports.createUser = async (req, res) => {
   try {
-    const {
-      name,
+    const { name, email, password, role } = req.body;
 
-      email,
+    // ==========================================
+    // REQUIRED FIELDS
+    // ==========================================
 
-      password,
+    if (!name || !email || !password || !role) {
+      return res.status(400).json({
+        success: false,
+        message: "Name, email, password and role are required",
+      });
+    }
 
-      role,
+    // ==========================================
+    // RESTRICT SPECIAL ROLES
+    // ==========================================
 
-      hostel,
-    } = req.body;
+    if (role === "WARDEN") {
+      return res.status(403).json({
+        success: false,
+        message: "Warden accounts can only be created by the Hostel Director",
+      });
+    }
+
+    if (role === "ADMIN" || role === "HOSTEL_DIRECTOR") {
+      return res.status(403).json({
+        success: false,
+        message:
+          "Admin and Hostel Director accounts cannot be created from this panel",
+      });
+    }
+
+    // ==========================================
+    // NORMALIZE EMAIL
+    // ==========================================
+
+    const normalizedEmail = email.trim().toLowerCase();
 
     // ==========================================
     // CHECK EXISTING USER
     // ==========================================
 
     const userExists = await User.findOne({
-      email,
+      email: normalizedEmail,
     });
 
     if (userExists) {
       return res.status(400).json({
         success: false,
-
         message: "User already exists",
       });
-    }
-
-    // ==========================================
-    // HOSTEL CODE CONVERSION
-    // ==========================================
-
-    let hostelCode = hostel;
-
-    if (hostel === "Boys Hostel H1") {
-      hostelCode = "H1";
-    }
-
-    if (hostel === "Boys Hostel H4") {
-      hostelCode = "H4";
-    }
-
-    if (hostel === "Girls Hostel H2") {
-      hostelCode = "H2";
-    }
-
-    if (hostel === "Girls Hostel H3") {
-      hostelCode = "H3";
-    }
-
-    if (hostel === "Faculty Hostel H5") {
-      hostelCode = "H5";
-    }
-
-    // ==========================================
-    // CREATE USER OBJECT
-    // ==========================================
-
-    const userData = {
-      name,
-
-      email,
-
-      password,
-
-      role,
-    };
-
-    // ==========================================
-    // WARDEN EXTRA DATA
-    // ==========================================
-
-    if (role === "WARDEN") {
-      userData.assignedHostel = hostelCode;
-
-      userData.designation = "Hostel Warden";
-
-      userData.isApproved = true;
     }
 
     // ==========================================
     // CREATE USER
     // ==========================================
 
-    const user = await User.create(userData);
+    const user = await User.create({
+      name: name.trim(),
+      email: normalizedEmail,
+      password,
+      role,
+    });
 
     // ==========================================
     // RESPONSE
     // ==========================================
 
-    res.status(201).json({
+    return res.status(201).json({
       success: true,
-
       message: `${role} created successfully`,
-
       user,
     });
   } catch (error) {
-    console.log(error);
+    console.log("ADMIN CREATE USER ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-
       message: error.message || "Server Error",
     });
   }

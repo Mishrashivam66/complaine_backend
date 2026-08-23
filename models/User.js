@@ -90,21 +90,32 @@ const userSchema = new mongoose.Schema(
 
       enum: [
         "ADMIN",
+
+        "HOSTEL_DIRECTOR",
+
         "WARDEN",
+
         "MAINTENANCE_MANAGER",
+
         "STORE_MANAGER",
+
         "HOUSEKEEPING_HEAD",
+
         "IT_HEAD",
+
         "WORKER",
+
         "STUDENT",
+
         "FACULTY",
+
         "ADMIN_STAFF",
+
         "MESS_MANAGER",
       ],
 
       default: "STUDENT",
     },
-
     // ==========================================
     // DEPARTMENT
     // ==========================================
