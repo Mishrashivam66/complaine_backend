@@ -1,8 +1,18 @@
 const Complaint = require("../../models/Complaint");
 
 const User = require("../../models/User");
+
 const Category = require("../../models/Category");
+
+const JobCard = require("../../models/JobCard");
+
 const sendNotification = require("../../utils/sendNotification");
+
+// ==========================================
+// MAX ACTIVE JOBS PER WORKER
+// ==========================================
+
+const MAX_JOBS = 10;
 
 // ==========================================
 // GET ALL COMPLAINTS
@@ -10,33 +20,20 @@ const sendNotification = require("../../utils/sendNotification");
 
 exports.getComplaintsForAssignment = async (req, res) => {
   try {
-    // ======================================
-    // FETCH COMPLAINTS
-    // ======================================
-
     const complaints = await Complaint.find({
       status: {
         $in: ["PENDING", "ASSIGNED", "IN_PROGRESS"],
       },
     })
-
       .populate("createdBy", "name email phone hostel roomNumber")
-
       .populate("assignedTo", "name department phone")
-
       .sort({
         createdAt: -1,
       });
 
-    // ======================================
-    // RESPONSE
-    // ======================================
-
     return res.status(200).json({
       success: true,
-
       count: complaints.length,
-
       complaints,
     });
   } catch (error) {
@@ -44,7 +41,6 @@ exports.getComplaintsForAssignment = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-
       message: "Failed to fetch complaints",
     });
   }
@@ -56,34 +52,21 @@ exports.getComplaintsForAssignment = async (req, res) => {
 
 exports.getWorkers = async (req, res) => {
   try {
-    // ======================================
-    // FETCH WORKERS
-    // ======================================
-
     const workers = await User.find({
       role: "WORKER",
-
       isActive: true,
-    }).select(
-      `
-          name
-          phone
-          department
-          shift
-          status
-          currentJobs
-        `,
-    );
-
-    // ======================================
-    // RESPONSE
-    // ======================================
+    }).select(`
+      name
+      phone
+      department
+      shift
+      status
+      currentJobs
+    `);
 
     return res.status(200).json({
       success: true,
-
       count: workers.length,
-
       workers,
     });
   } catch (error) {
@@ -91,13 +74,14 @@ exports.getWorkers = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-
       message: "Failed to fetch workers",
     });
   }
 };
 
+// ==========================================
 // ASSIGN WORKER
+// ==========================================
 
 exports.assignWorker = async (req, res) => {
   try {
@@ -116,9 +100,14 @@ exports.assignWorker = async (req, res) => {
 
     // ======================================
     // FIND COMPLAINT
+    // IMPORTANT:
+    // STUDENT NAME + PHONE POPULATED
     // ======================================
 
-    const complaint = await Complaint.findById(complaintId);
+    const complaint = await Complaint.findById(complaintId).populate(
+      "createdBy",
+      "name email phone hostel roomNumber",
+    );
 
     if (!complaint) {
       return res.status(404).json({
@@ -154,8 +143,9 @@ exports.assignWorker = async (req, res) => {
         message: "Complaint already assigned",
       });
     }
+
     // ======================================
-    // CATEGORY MATCH
+    // CATEGORY CONFIGURATION
     // ======================================
 
     const categoryData = await Category.findOne({
@@ -168,6 +158,11 @@ exports.assignWorker = async (req, res) => {
         message: "Category configuration not found",
       });
     }
+
+    // ======================================
+    // CATEGORY / DEPARTMENT MATCH
+    // ======================================
+
     const complaintCategory = complaint.category?.toLowerCase()?.trim();
 
     const workerDepartment = worker.department?.toLowerCase()?.trim();
@@ -183,6 +178,71 @@ exports.assignWorker = async (req, res) => {
     // ACTIVE JOB COUNT
     // ======================================
 
+    const activeJobs = await JobCard.countDocuments({
+      assignedWorker: worker._id,
+
+      status: {
+        $in: [
+          "ASSIGNED",
+          "IN_PROGRESS",
+          "PARTIALLY_COMPLETED",
+          "WAITING_MATERIAL",
+        ],
+      },
+
+      isCompleted: false,
+    });
+
+    if (activeJobs >= MAX_JOBS) {
+      return res.status(400).json({
+        success: false,
+
+        message: `Worker already has maximum ${MAX_JOBS} active Job Cards`,
+      });
+    }
+
+    // ======================================
+    // FIND EXISTING ACTIVE JOB CARD
+    //
+    // SAME:
+    // HOSTEL
+    // CATEGORY
+    // WORKER
+    //
+    // MAXIMUM 10 COMPLAINTS
+    // ======================================
+
+    const existingJobCard = await JobCard.findOne({
+      hostel: complaint.hostel || "",
+
+      category: complaint.category,
+
+      assignedWorker: worker._id,
+
+      isCompleted: false,
+
+      totalComplaints: {
+        $lt: 10,
+      },
+
+      status: {
+        $in: [
+          "ASSIGNED",
+          "IN_PROGRESS",
+          "PARTIALLY_COMPLETED",
+          "WAITING_MATERIAL",
+        ],
+      },
+    });
+
+    // ======================================
+    // STUDENT CONTACT SNAPSHOT
+    // ======================================
+
+    const studentName = complaint.createdBy?.name || "";
+
+    const studentPhone = complaint.createdBy?.phone || "";
+
     // ======================================
     // UPDATE COMPLAINT
     // ======================================
@@ -197,23 +257,27 @@ exports.assignWorker = async (req, res) => {
 
     complaint.startedAt = new Date();
 
-    // Material decision not taken yet
+    // ======================================
+    // MATERIAL DECISION
+    // ======================================
+
     complaint.materialDecision = "PENDING";
+
     complaint.materialRequired = false;
 
     await complaint.save();
 
     // ======================================
-    // CREATE / UPDATE JOBCARD
+    // CREATE NEW JOB CARD
     // ======================================
 
     if (!existingJobCard) {
       await JobCard.create({
         jobCardId: `JOB-${Date.now()}`,
 
-        hostel: complaint.hostel,
+        hostel: complaint.hostel || "",
 
-        block: complaint.block,
+        block: complaint.block || "",
 
         category: complaint.category,
 
@@ -226,6 +290,7 @@ exports.assignWorker = async (req, res) => {
         workerStatus: "WORKING",
 
         startedAt: new Date(),
+
         totalComplaints: 1,
 
         complaints: [
@@ -234,66 +299,96 @@ exports.assignWorker = async (req, res) => {
 
             complaint: complaint._id,
 
-            roomNumber: complaint.roomNumber,
+            roomNumber: complaint.roomNumber || "",
 
-            floor: complaint.floor,
+            floor: complaint.floor || "",
 
-            title: complaint.title,
+            title: complaint.title || "",
 
-            titleHindi: complaint.titleHindi,
+            titleHindi: complaint.titleHindi || "",
 
-            description: complaint.description,
+            description: complaint.description || "",
 
-            descriptionHindi: complaint.descriptionHindi,
+            descriptionHindi: complaint.descriptionHindi || "",
 
-            priority: complaint.priority,
+            priority: complaint.priority || "MEDIUM",
 
             status: "ASSIGNED",
 
             startedAt: new Date(),
 
-            materialRequired: complaint.materialRequired,
+            // ==============================
+            // STUDENT CONTACT
+            // ==============================
 
-            materialStatus: complaint.materialRequired
-              ? "PENDING"
-              : "NOT_REQUIRED",
+            studentName,
+
+            studentPhone,
+
+            // ==============================
+            // MATERIAL
+            // ==============================
+
+            materialRequired: complaint.materialRequired,
           },
         ],
       });
     } else {
+      // ====================================
+      // ADD TO EXISTING JOB CARD
+      // ====================================
+
       existingJobCard.complaints.push({
         serialNumber: existingJobCard.complaints.length + 1,
 
         complaint: complaint._id,
 
-        roomNumber: complaint.roomNumber,
+        roomNumber: complaint.roomNumber || "",
 
-        floor: complaint.floor,
+        floor: complaint.floor || "",
 
-        title: complaint.title,
+        title: complaint.title || "",
 
-        titleHindi: complaint.titleHindi,
+        titleHindi: complaint.titleHindi || "",
 
-        description: complaint.description,
+        description: complaint.description || "",
 
-        descriptionHindi: complaint.descriptionHindi,
+        descriptionHindi: complaint.descriptionHindi || "",
 
-        priority: complaint.priority,
+        priority: complaint.priority || "MEDIUM",
 
         status: "ASSIGNED",
 
-        materialRequired: complaint.materialRequired,
+        startedAt: new Date(),
 
-        materialStatus: complaint.materialRequired ? "PENDING" : "NOT_REQUIRED",
+        // ================================
+        // STUDENT CONTACT
+        // ================================
+
+        studentName,
+
+        studentPhone,
+
+        // ================================
+        // MATERIAL
+        // ================================
+
+        materialRequired: complaint.materialRequired,
       });
+
       existingJobCard.totalComplaints = existingJobCard.complaints.length;
 
       existingJobCard.workerStatus = "WORKING";
+
       existingJobCard.status = "IN_PROGRESS";
-      existingJobCard.startedAt = new Date();
+
+      if (!existingJobCard.startedAt) {
+        existingJobCard.startedAt = new Date();
+      }
 
       await existingJobCard.save();
     }
+
     // ======================================
     // NOTIFY WORKER
     // ======================================
@@ -314,21 +409,28 @@ exports.assignWorker = async (req, res) => {
 
     // ======================================
     // NOTIFY STUDENT
+    //
+    // createdBy is populated now,
+    // therefore use createdBy._id
     // ======================================
 
-    await sendNotification({
-      receiver: complaint.createdBy,
+    const studentId = complaint.createdBy?._id;
 
-      sender: req.user._id,
+    if (studentId) {
+      await sendNotification({
+        receiver: studentId,
 
-      title: "Worker Assigned",
+        sender: req.user._id,
 
-      message: "Maintenance worker assigned successfully",
+        title: "Worker Assigned",
 
-      type: "STATUS_UPDATE",
+        message: "Maintenance worker assigned successfully",
 
-      relatedComplaint: complaint._id,
-    });
+        type: "STATUS_UPDATE",
+
+        relatedComplaint: complaint._id,
+      });
+    }
 
     // ======================================
     // RESPONSE
@@ -338,15 +440,22 @@ exports.assignWorker = async (req, res) => {
       success: true,
 
       message: "Worker assigned successfully",
+
+      studentContact: {
+        name: studentName,
+
+        phone: studentPhone || "Not Provided",
+      },
     });
   } catch (error) {
     console.log("ASSIGN WORKER ERROR:", error);
+
     console.log(error.stack);
 
     return res.status(500).json({
       success: false,
-      message: error.message,
-      stack: error.stack,
+
+      message: error.message || "Failed to assign worker",
     });
   }
 };
@@ -368,6 +477,7 @@ exports.updateMaterialDecision = async (req, res) => {
     if (!["REQUIRED", "NOT_REQUIRED"].includes(decision)) {
       return res.status(400).json({
         success: false,
+
         message: "Invalid material decision",
       });
     }
@@ -381,6 +491,7 @@ exports.updateMaterialDecision = async (req, res) => {
     if (!complaint) {
       return res.status(404).json({
         success: false,
+
         message: "Complaint not found",
       });
     }
@@ -392,6 +503,7 @@ exports.updateMaterialDecision = async (req, res) => {
     if (!complaint.assignedTo) {
       return res.status(400).json({
         success: false,
+
         message: "Assign a worker before selecting material requirement",
       });
     }
@@ -402,15 +514,31 @@ exports.updateMaterialDecision = async (req, res) => {
 
     complaint.materialDecision = decision;
 
-    if (decision === "REQUIRED") {
-      complaint.materialRequired = true;
-    }
-
-    if (decision === "NOT_REQUIRED") {
-      complaint.materialRequired = false;
-    }
+    complaint.materialRequired = decision === "REQUIRED";
 
     await complaint.save();
+
+    // ======================================
+    // UPDATE JOB CARD COMPLAINT SNAPSHOT
+    // ======================================
+
+    const jobCard = await JobCard.findOne({
+      "complaints.complaint": complaint._id,
+
+      isCompleted: false,
+    });
+
+    if (jobCard) {
+      const item = jobCard.complaints.find(
+        (entry) => String(entry.complaint) === String(complaint._id),
+      );
+
+      if (item) {
+        item.materialRequired = complaint.materialRequired;
+
+        await jobCard.save();
+      }
+    }
 
     // ======================================
     // RESPONSE
@@ -429,6 +557,7 @@ exports.updateMaterialDecision = async (req, res) => {
 
     return res.status(500).json({
       success: false,
+
       message: error.message || "Failed to update material decision",
     });
   }

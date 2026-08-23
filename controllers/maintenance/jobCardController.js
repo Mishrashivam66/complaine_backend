@@ -240,7 +240,7 @@ exports.createJobCard = async (req, res) => {
 
       const materialRequired = Boolean(materialRequest);
 
-      let itemStatus =
+      const itemStatus =
         complaint.status === "IN_PROGRESS" ? "IN_PROGRESS" : "ASSIGNED";
 
       return {
@@ -266,12 +266,23 @@ exports.createJobCard = async (req, res) => {
 
         startedAt: complaint.startedAt || null,
 
+        // ======================================
+        // STUDENT CONTACT SNAPSHOT
+        // ======================================
+
+        studentName: complaint.createdBy?.name || "",
+
+        studentPhone: complaint.createdBy?.phone || "",
+
+        // ======================================
+        // MATERIAL
+        // ======================================
+
         materialRequired,
 
         materialRequest: materialRequest?._id || null,
       };
     });
-
     // ======================================
     // HIGHEST PRIORITY
     // ======================================
@@ -450,22 +461,23 @@ exports.getAllJobCards = async (req, res) => {
         },
 
         select: `
-    complaintId
-    title
-    titleHindi
-    description
-    descriptionHindi
-    category
-    subCategory
-    hostel
-    floor
-    block
-    roomNumber
-    priority
-    status
-    createdAt
-    startedAt
-  `,
+  complaintId
+  title
+  titleHindi
+  description
+  descriptionHindi
+  category
+  subCategory
+  hostel
+  floor
+  block
+  roomNumber
+  priority
+  status
+  createdAt
+  startedAt
+  createdBy
+`,
       })
 
       .populate({
@@ -556,22 +568,23 @@ exports.getSingleJobCard = async (req, res) => {
         },
 
         select: `
-      complaintId
-      title
-      titleHindi
-      description
-      descriptionHindi
-      category
-      subCategory
-      hostel
-      floor
-      block
-      roomNumber
-      priority
-      status
-      createdAt
-      startedAt
-    `,
+  complaintId
+  title
+  titleHindi
+  description
+  descriptionHindi
+  category
+  subCategory
+  hostel
+  floor
+  block
+  roomNumber
+  priority
+  status
+  createdAt
+  startedAt
+  createdBy
+`,
       })
 
       // ======================================

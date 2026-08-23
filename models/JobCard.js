@@ -70,6 +70,23 @@ const complaintItemSchema = new mongoose.Schema(
     },
 
     // ==========================================
+    // STUDENT CONTACT SNAPSHOT
+    // Physical Job Card ke liye
+    // ==========================================
+
+    studentName: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    studentPhone: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+
+    // ==========================================
     // MATERIAL WORKFLOW
     // ==========================================
 
@@ -470,32 +487,32 @@ jobCardSchema.index({
 // ==========================================
 
 jobCardSchema.pre("save", function () {
-  // ==========================================
+  // ========================================
   // TOTAL COMPLAINTS
-  // ==========================================
+  // ========================================
 
   this.totalComplaints = this.complaints.length;
 
-  // ==========================================
+  // ========================================
   // COMPLETED COMPLAINTS
-  // ==========================================
+  // ========================================
 
   this.completedComplaints = this.complaints.filter(
     (item) => item.status === "COMPLETED",
   ).length;
 
-  // ==========================================
+  // ========================================
   // WAITING MATERIAL CHECK
-  // ==========================================
+  // ========================================
 
   const waitingMaterial = this.complaints.some(
     (item) => item.status === "WAITING_MATERIAL",
   );
 
-  // ==========================================
+  // ========================================
   // ALL COMPLAINTS COMPLETED
   // Verification page is final authority
-  // ==========================================
+  // ========================================
 
   if (
     this.totalComplaints > 0 &&
@@ -514,15 +531,15 @@ jobCardSchema.pre("save", function () {
     return;
   }
 
-  // ==========================================
+  // ========================================
   // JOB IS STILL ACTIVE
-  // ==========================================
+  // ========================================
 
   this.isCompleted = false;
 
-  // ==========================================
+  // ========================================
   // WAITING MATERIAL
-  // ==========================================
+  // ========================================
 
   if (waitingMaterial) {
     this.status = "WAITING_MATERIAL";
@@ -532,9 +549,9 @@ jobCardSchema.pre("save", function () {
     return;
   }
 
-  // ==========================================
+  // ========================================
   // PARTIALLY COMPLETED
-  // ==========================================
+  // ========================================
 
   if (
     this.completedComplaints > 0 &&
