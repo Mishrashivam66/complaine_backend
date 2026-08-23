@@ -1,17 +1,15 @@
 const Complaint = require("../../models/Complaint");
 const Category = require("../../models/Category");
+const User = require("../../models/User");
+
 const sendNotification = require("../../utils/sendNotification");
 
-const User = require("../../models/User");
 const translate = require("translate-google");
-// ==========================================
-// 24 HOUR DEADLINE
-// ==========================================
-
 
 // ==========================================
-// CREATE COMPLAINT
+// TECHNICAL TERMS
 // ==========================================
+
 const technicalTerms = {
   "Tube Light": "ट्यूब लाइट",
   "Switch Board": "स्विच बोर्ड",
@@ -25,25 +23,138 @@ const technicalTerms = {
   "Wash Basin": "वॉश बेसिन",
   "Door Lock": "दरवाज़े का ताला",
 };
+
+// ==========================================
+// NOTIFICATION PRIORITY
+//
+// Complaint:
+// LOW / MEDIUM / HIGH / URGENT
+//
+// Notification:
+// LOW / MEDIUM / HIGH / CRITICAL
+// ==========================================
+
+const getNotificationPriority = (priority) => {
+  switch (String(priority || "").toUpperCase()) {
+    case "URGENT":
+      return "CRITICAL";
+
+    case "HIGH":
+      return "HIGH";
+
+    case "MEDIUM":
+      return "MEDIUM";
+
+    default:
+      return "LOW";
+  }
+};
+
+// ==========================================
+// SAFE SEND NOTIFICATION
+//
+// Notification fail hone par main
+// complaint workflow fail nahi hoga
+// ==========================================
+
+const safeSendNotification = async (data) => {
+  try {
+    await sendNotification(data);
+  } catch (error) {
+    console.log("NOTIFICATION ERROR:", error.message);
+  }
+};
+
+// ==========================================
+// STATUS MESSAGE
+// ==========================================
+
+const getStatusNotification = (status, complaint) => {
+  const complaintRef = complaint.complaintId || "Complaint";
+
+  switch (String(status || "").toUpperCase()) {
+    case "PENDING":
+      return {
+        title: "Complaint Pending",
+        message: `${complaintRef} is currently pending.`,
+      };
+
+    case "ASSIGNED":
+      return {
+        title: "Worker Assigned",
+        message: `A maintenance worker has been assigned to ${complaintRef}.`,
+      };
+
+    case "IN_PROGRESS":
+      return {
+        title: "Work In Progress",
+        message: `Work has started on ${complaintRef}.`,
+      };
+
+    case "WAITING_MATERIAL":
+      return {
+        title: "Waiting for Material",
+        message: `${complaintRef} is waiting for required material.`,
+      };
+
+    case "COMPLETED":
+      return {
+        title: "Work Completed",
+        message: `Work for ${complaintRef} has been completed.`,
+      };
+
+    case "CLOSED":
+      return {
+        title: "Complaint Closed",
+        message: `${complaintRef} has been closed successfully.`,
+      };
+
+    case "REOPENED":
+      return {
+        title: "Complaint Reopened",
+        message: `${complaintRef} has been reopened.`,
+      };
+
+    default:
+      return {
+        title: "Complaint Updated",
+        message: `${complaintRef} status has been updated to ${status}.`,
+      };
+  }
+};
+
+// ==========================================
+// CREATE COMPLAINT
+// ==========================================
+
 const createComplaint = async (req, res) => {
   try {
     // ======================================
-    // GET STUDENT FROM DATABASE
+    // GET STUDENT
     // ======================================
 
     const student = await User.findById(req.user.id).select(
-      "name role isHosteller hostel roomNumber block department",
+      `
+          name
+          role
+          isHosteller
+          hostel
+          roomNumber
+          block
+          department
+        `,
     );
 
     if (!student) {
       return res.status(404).json({
         success: false,
+
         message: "Student profile not found",
       });
     }
 
     // ======================================
-    // HOSTELLER / DAY SCHOLAR CHECK
+    // HOSTELLER / DAY SCHOLAR
     // ======================================
 
     const isHosteller = student.isHosteller === true;
@@ -59,6 +170,7 @@ const createComplaint = async (req, res) => {
     if (!isHosteller && complaintArea !== "DEPARTMENT") {
       return res.status(403).json({
         success: false,
+
         message:
           "Day scholars can raise complaints only for their own department.",
       });
@@ -72,6 +184,7 @@ const createComplaint = async (req, res) => {
       if (!student.department || !student.block) {
         return res.status(400).json({
           success: false,
+
           message:
             "Your department or block is not assigned. Please contact administrator.",
         });
@@ -84,6 +197,7 @@ const createComplaint = async (req, res) => {
 
     const complaintData = {
       ...req.body,
+
       complaintArea,
     };
 
@@ -94,15 +208,14 @@ const createComplaint = async (req, res) => {
     if (!isHosteller) {
       complaintData.complaintArea = "DEPARTMENT";
 
-      // Always use database profile values
       complaintData.department = student.department;
+
       complaintData.block = student.block;
 
-      // Day Scholar has no hostel fields
       complaintData.hostel = "";
+
       complaintData.roomNumber = "";
 
-      // Time is only for hostel complaints
       delete complaintData.availableFrom;
       delete complaintData.availableTo;
     }
@@ -112,9 +225,9 @@ const createComplaint = async (req, res) => {
     // ======================================
     else if (complaintArea === "HOSTEL") {
       complaintData.hostel = student.hostel;
+
       complaintData.roomNumber = student.roomNumber || "";
 
-      // Block from student profile
       complaintData.block = student.block || "";
     }
 
@@ -123,9 +236,9 @@ const createComplaint = async (req, res) => {
     // ======================================
     else if (complaintArea === "DEPARTMENT") {
       complaintData.department = student.department;
+
       complaintData.block = student.block;
 
-      // No timing for department complaint
       delete complaintData.availableFrom;
       delete complaintData.availableTo;
     }
@@ -134,16 +247,16 @@ const createComplaint = async (req, res) => {
     // CAMPUS COMPLAINT
     // ======================================
     else if (complaintArea === "CAMPUS") {
-      // Campus complaint doesn't need hostel timing
       delete complaintData.availableFrom;
       delete complaintData.availableTo;
     }
 
     // ======================================
-    // AUTO TRANSLATE TO HINDI
+    // AUTO TRANSLATE
     // ======================================
 
     let titleHindi = "";
+
     let descriptionHindi = "";
 
     try {
@@ -159,7 +272,7 @@ const createComplaint = async (req, res) => {
         });
       }
     } catch (error) {
-      console.log("Translation Error:", error.message);
+      console.log("TRANSLATION ERROR:", error.message);
     }
 
     // ======================================
@@ -171,7 +284,7 @@ const createComplaint = async (req, res) => {
     }
 
     // ======================================
-    // 24 HOUR DEADLINE
+    // 24 HOUR COMPLAINT DEADLINE
     // ======================================
 
     const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -202,71 +315,76 @@ const createComplaint = async (req, res) => {
     // STUDENT NOTIFICATION
     // ======================================
 
-    try {
-      await sendNotification({
-        receiver: req.user.id,
+    await safeSendNotification({
+      receiver: req.user.id,
 
-        sender: req.user.id,
+      sender: req.user.id,
 
-        title: "Complaint Submitted",
+      title: "Complaint Submitted",
 
-        message: `Your complaint "${complaint.subCategory}" has been submitted successfully.`,
+      message: `Your complaint "${complaint.subCategory || complaint.title || complaint.category}" has been submitted successfully.`,
 
-        type: "COMPLAINT",
+      type: "COMPLAINT",
 
-        priority: complaint.priority || "MEDIUM",
+      priority: getNotificationPriority(complaint.priority),
 
-        relatedComplaint: complaint._id,
-      });
-    } catch (notificationError) {
-      console.log("Student Notification Error:", notificationError.message);
-    }
+      relatedComplaint: complaint._id,
+
+      relatedId: complaint._id,
+
+      relatedModel: "Complaint",
+
+      actionUrl: "/dashboard",
+    });
 
     // ======================================
-    // FIND MAINTENANCE MANAGERS
+    // MAINTENANCE MANAGER NOTIFICATIONS
+    //
+    // IMPORTANT:
+    // Jab Department Verification module
+    // complete hoga, is notification ko
+    // CREATE time se hata kar
+    // VERIFIED action par shift karenge.
     // ======================================
 
     const managers = await User.find({
       role: "MAINTENANCE_MANAGER",
-    });
 
-    // ======================================
-    // SEND NOTIFICATION TO MANAGERS
-    // ======================================
+      isActive: true,
+    }).select("_id");
 
     if (managers.length > 0) {
-      for (const manager of managers) {
-        if (!manager?._id) continue;
+      const managerNotifications = managers.map((manager) =>
+        safeSendNotification({
+          receiver: manager._id,
 
-        try {
-          await sendNotification({
-            receiver: manager._id,
+          sender: req.user.id,
 
-            sender: req.user.id,
+          title: "New Complaint",
 
-            title: "New Complaint",
+          message: `${student.name || "Student"} created complaint ${complaint.complaintId} for ${
+            complaint.subCategory || complaint.title || complaint.category
+          }.`,
 
-            message: `${
-              student.name || "Student"
-            } created a new complaint for ${complaint.subCategory}`,
+          type: "COMPLAINT",
 
-            type: "COMPLAINT",
+          priority: getNotificationPriority(complaint.priority),
 
-            priority: complaint.priority || "HIGH",
+          relatedComplaint: complaint._id,
 
-            relatedComplaint: complaint._id,
-          });
-        } catch (managerNotificationError) {
-          console.log(
-            "Manager Notification Error:",
-            managerNotificationError.message,
-          );
-        }
-      }
+          relatedId: complaint._id,
+
+          relatedModel: "Complaint",
+
+          actionUrl: "/maintenance/dashboard",
+        }),
+      );
+
+      await Promise.allSettled(managerNotifications);
     }
 
     // ======================================
-    // SUCCESS RESPONSE
+    // RESPONSE
     // ======================================
 
     return res.status(201).json({
@@ -277,7 +395,7 @@ const createComplaint = async (req, res) => {
       complaint,
     });
   } catch (error) {
-    console.log("Create Complaint Error:", error);
+    console.log("CREATE COMPLAINT ERROR:", error);
 
     return res.status(500).json({
       success: false,
@@ -303,7 +421,7 @@ const getAllComplaints = async (req, res) => {
         createdAt: -1,
       });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
 
       complaints,
@@ -311,7 +429,7 @@ const getAllComplaints = async (req, res) => {
   } catch (error) {
     console.log(error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
 
       message: error.message,
@@ -331,7 +449,6 @@ const getMyComplaints = async (req, res) => {
 
       .populate(
         "assignedTo",
-
         `
             name
             email
@@ -346,7 +463,7 @@ const getMyComplaints = async (req, res) => {
         createdAt: -1,
       });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
 
       complaints,
@@ -354,7 +471,7 @@ const getMyComplaints = async (req, res) => {
   } catch (error) {
     console.log(error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
 
       message: error.message,
@@ -382,7 +499,7 @@ const getComplaintById = async (req, res) => {
       });
     }
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
 
       complaint,
@@ -390,7 +507,7 @@ const getComplaintById = async (req, res) => {
   } catch (error) {
     console.log(error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
 
       message: error.message,
@@ -409,21 +526,24 @@ const updateComplaintStatus = async (req, res) => {
     if (!complaint) {
       return res.status(404).json({
         success: false,
+
         message: "Complaint not found",
       });
     }
 
     const oldStatus = complaint.status;
 
-    complaint.status = req.body.status || complaint.status;
+    const newStatus = req.body.status || complaint.status;
+
+    complaint.status = newStatus;
 
     complaint.remarks = req.body.remarks || complaint.remarks;
 
     // ======================================
-    // COMPLAINT CLOSED
+    // CLOSED
     // ======================================
 
-    if (req.body.status === "CLOSED" && oldStatus !== "CLOSED") {
+    if (newStatus === "CLOSED" && oldStatus !== "CLOSED") {
       complaint.closedAt = new Date();
 
       if (complaint.assignedTo) {
@@ -439,22 +559,59 @@ const updateComplaintStatus = async (req, res) => {
       }
     }
 
+    // ======================================
+    // SAVE
+    // ======================================
+
     await complaint.save();
 
-    const io = getIO();
+    // ======================================
+    // STUDENT STATUS NOTIFICATION
+    // ======================================
 
-    io.emit("complaintUpdated");
+    if (oldStatus !== complaint.status && complaint.createdBy) {
+      const notification = getStatusNotification(complaint.status, complaint);
+
+      await safeSendNotification({
+        receiver: complaint.createdBy,
+
+        sender: req.user._id,
+
+        title: notification.title,
+
+        message: notification.message,
+
+        type: "STATUS_UPDATE",
+
+        priority: getNotificationPriority(complaint.priority),
+
+        relatedComplaint: complaint._id,
+
+        relatedId: complaint._id,
+
+        relatedModel: "Complaint",
+
+        actionUrl: "/dashboard",
+      });
+    }
+
+    // ======================================
+    // NO SOCKET.IO
+    // ======================================
 
     return res.status(200).json({
       success: true,
+
       message: "Complaint updated successfully",
+
       complaint,
     });
   } catch (error) {
-    console.log(error);
+    console.log("UPDATE COMPLAINT ERROR:", error);
 
     return res.status(500).json({
       success: false,
+
       message: error.message,
     });
   }
@@ -471,6 +628,7 @@ const assignComplaint = async (req, res) => {
     if (!complaint) {
       return res.status(404).json({
         success: false,
+
         message: "Complaint not found",
       });
     }
@@ -484,17 +642,19 @@ const assignComplaint = async (req, res) => {
     if (!worker) {
       return res.status(404).json({
         success: false,
+
         message: "Worker not found",
       });
     }
 
     // ======================================
-    // MAX 10 ACTIVE COMPLAINTS CHECK
+    // MAX 10
     // ======================================
 
     if ((worker.currentJobs || 0) >= 10) {
       return res.status(400).json({
         success: false,
+
         message: "Worker already has 10 active complaints",
       });
     }
@@ -508,7 +668,7 @@ const assignComplaint = async (req, res) => {
     complaint.status = "ASSIGNED";
 
     // ======================================
-    // UPDATE WORKER STATUS
+    // UPDATE WORKER
     // ======================================
 
     worker.currentJobs = (worker.currentJobs || 0) + 1;
@@ -523,20 +683,77 @@ const assignComplaint = async (req, res) => {
 
     await complaint.save();
 
-    const io = getIO();
+    // ======================================
+    // WORKER NOTIFICATION
+    // ======================================
 
-    io.emit("complaintUpdated");
+    await safeSendNotification({
+      receiver: worker._id,
+
+      sender: req.user._id,
+
+      title: "New Complaint Assigned",
+
+      message: `${complaint.complaintId} has been assigned to you.`,
+
+      type: "WORKER_ASSIGN",
+
+      priority: getNotificationPriority(complaint.priority),
+
+      relatedComplaint: complaint._id,
+
+      relatedId: complaint._id,
+
+      relatedModel: "Complaint",
+
+      actionUrl: "/dashboard",
+    });
+
+    // ======================================
+    // STUDENT NOTIFICATION
+    // ======================================
+
+    if (complaint.createdBy) {
+      await safeSendNotification({
+        receiver: complaint.createdBy,
+
+        sender: req.user._id,
+
+        title: "Worker Assigned",
+
+        message: `${worker.name || "Maintenance worker"} has been assigned to your complaint ${complaint.complaintId}.`,
+
+        type: "STATUS_UPDATE",
+
+        priority: "MEDIUM",
+
+        relatedComplaint: complaint._id,
+
+        relatedId: complaint._id,
+
+        relatedModel: "Complaint",
+
+        actionUrl: "/dashboard",
+      });
+    }
+
+    // ======================================
+    // NO SOCKET.IO
+    // ======================================
 
     return res.status(200).json({
       success: true,
+
       message: "Complaint assigned successfully",
+
       complaint,
     });
   } catch (error) {
-    console.log(error);
+    console.log("ASSIGN COMPLAINT ERROR:", error);
 
     return res.status(500).json({
       success: false,
+
       message: error.message,
     });
   }
@@ -560,16 +777,109 @@ const reopenComplaint = async (req, res) => {
 
     complaint.status = "REOPENED";
 
-    complaint.reopenCount += 1;
+    complaint.reopenCount = (complaint.reopenCount || 0) + 1;
 
-    complaint.reopenReason = req.body.reason;
+    complaint.reopenReason = req.body.reason || "";
 
     await complaint.save();
-    const io = getIO();
 
-    io.emit("complaintUpdated");
+    // ======================================
+    // STUDENT ACKNOWLEDGEMENT
+    // ======================================
 
-    res.status(200).json({
+    if (complaint.createdBy) {
+      await safeSendNotification({
+        receiver: complaint.createdBy,
+
+        sender: req.user._id,
+
+        title: "Complaint Reopened",
+
+        message: `Complaint ${complaint.complaintId} has been reopened successfully.`,
+
+        type: "REOPEN",
+
+        priority: getNotificationPriority(complaint.priority),
+
+        relatedComplaint: complaint._id,
+
+        relatedId: complaint._id,
+
+        relatedModel: "Complaint",
+
+        actionUrl: "/dashboard",
+      });
+    }
+
+    // ======================================
+    // ASSIGNED WORKER NOTIFICATION
+    // ======================================
+
+    if (complaint.assignedTo) {
+      await safeSendNotification({
+        receiver: complaint.assignedTo,
+
+        sender: req.user._id,
+
+        title: "Complaint Reopened",
+
+        message: `${complaint.complaintId} has been reopened and requires attention.`,
+
+        type: "REOPEN",
+
+        priority: getNotificationPriority(complaint.priority),
+
+        relatedComplaint: complaint._id,
+
+        relatedId: complaint._id,
+
+        relatedModel: "Complaint",
+
+        actionUrl: "/dashboard",
+      });
+    }
+
+    // ======================================
+    // MAINTENANCE MANAGER NOTIFICATIONS
+    // ======================================
+
+    const managers = await User.find({
+      role: "MAINTENANCE_MANAGER",
+
+      isActive: true,
+    }).select("_id");
+
+    await Promise.allSettled(
+      managers.map((manager) =>
+        safeSendNotification({
+          receiver: manager._id,
+
+          sender: req.user._id,
+
+          title: "Complaint Reopened",
+
+          message: `${complaint.complaintId} has been reopened.`,
+
+          type: "REOPEN",
+
+          priority: getNotificationPriority(complaint.priority),
+
+          relatedComplaint: complaint._id,
+
+          relatedId: complaint._id,
+
+          relatedModel: "Complaint",
+
+          actionUrl: "/maintenance/dashboard",
+        }),
+      ),
+    );
+
+    // ======================================
+    // RESPONSE
+    // ======================================
+
+    return res.status(200).json({
       success: true,
 
       message: "Complaint reopened",
@@ -577,9 +887,37 @@ const reopenComplaint = async (req, res) => {
       complaint,
     });
   } catch (error) {
+    console.log("REOPEN COMPLAINT ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+
+      message: error.message,
+    });
+  }
+};
+
+// ==========================================
+// GET CATEGORIES FOR STUDENTS
+// ==========================================
+
+const getCategoriesForStudents = async (req, res) => {
+  try {
+    const categories = await Category.find({
+      isActive: true,
+    }).sort({
+      createdAt: -1,
+    });
+
+    return res.status(200).json({
+      success: true,
+
+      categories,
+    });
+  } catch (error) {
     console.log(error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
 
       message: error.message,
@@ -590,33 +928,6 @@ const reopenComplaint = async (req, res) => {
 // ==========================================
 // EXPORTS
 // ==========================================
-
-// ==========================================
-// GET CATEGORIES FOR STUDENTS
-
-const getCategoriesForStudents = async (req, res) => {
-  try {
-    const categories = await Category.find({
-      isActive: true,
-    }).sort({
-      createdAt: -1,
-    });
-
-    res.status(200).json({
-      success: true,
-
-      categories,
-    });
-  } catch (error) {
-    console.log(error);
-
-    res.status(500).json({
-      success: false,
-
-      message: error.message,
-    });
-  }
-};
 
 module.exports = {
   createComplaint,
@@ -632,5 +943,6 @@ module.exports = {
   assignComplaint,
 
   reopenComplaint,
+
   getCategoriesForStudents,
 };

@@ -6,6 +6,42 @@ const JobCard = require("../../models/JobCard");
 
 const User = require("../../models/User");
 
+const sendNotification = require("../../utils/sendNotification");
+
+// ==========================================
+// NOTIFICATION PRIORITY
+// ==========================================
+
+const getNotificationPriority = (priority) => {
+  switch (String(priority || "").toUpperCase()) {
+    case "URGENT":
+      return "CRITICAL";
+
+    case "HIGH":
+      return "HIGH";
+
+    case "MEDIUM":
+      return "MEDIUM";
+
+    default:
+      return "LOW";
+  }
+};
+
+// ==========================================
+// SAFE NOTIFICATION
+// Notification fail hone par main workflow
+// fail nahi hoga
+// ==========================================
+
+const safeSendNotification = async (data) => {
+  try {
+    await sendNotification(data);
+  } catch (error) {
+    console.log("REOPEN NOTIFICATION ERROR:", error.message);
+  }
+};
+
 // ==========================================
 // GET ALL REOPEN COMPLAINTS
 // ==========================================
@@ -24,6 +60,8 @@ exports.getAllReopenComplaints = async (req, res) => {
               hostel
               roomNumber
               status
+              priority
+              reopenReason
             `,
       })
 
@@ -113,7 +151,10 @@ exports.createReopenComplaint = async (req, res) => {
     // FIND COMPLAINT
     // ======================================
 
-    const complaint = await Complaint.findById(complaintId);
+    const complaint = await Complaint.findById(complaintId).populate(
+      "createdBy",
+      "name email phone",
+    );
 
     if (!complaint) {
       return res.status(404).json({
@@ -124,11 +165,15 @@ exports.createReopenComplaint = async (req, res) => {
     }
 
     // ======================================
-    // FIND JOBCARD
+    // FIND JOB CARD
+    //
+    // IMPORTANT:
+    // Complaint JobCard ke complaints[]
+    // array ke andar stored hai
     // ======================================
 
     const jobCard = await JobCard.findOne({
-      complaint: complaint._id,
+      "complaints.complaint": complaint._id,
     });
 
     if (!jobCard) {
@@ -138,6 +183,12 @@ exports.createReopenComplaint = async (req, res) => {
         message: "Job card not found",
       });
     }
+
+    // ======================================
+    // PREVIOUS WORKER
+    // ======================================
+
+    const previousWorker = complaint.assignedTo || null;
 
     // ======================================
     // UPDATE COMPLAINT
@@ -159,6 +210,28 @@ exports.createReopenComplaint = async (req, res) => {
 
     jobCard.workerStatus = "WORKING";
 
+    jobCard.isCompleted = false;
+
+    jobCard.completedAt = null;
+
+    // ======================================
+    // UPDATE PARTICULAR COMPLAINT ITEM
+    // ======================================
+
+    const jobComplaint = jobCard.complaints.find(
+      (item) => String(item.complaint) === String(complaint._id),
+    );
+
+    if (jobComplaint) {
+      jobComplaint.status = "IN_PROGRESS";
+
+      jobComplaint.completedAt = null;
+
+      jobComplaint.workerRemarks = "";
+
+      jobComplaint.managerRemarks = "";
+    }
+
     await jobCard.save();
 
     // ======================================
@@ -172,13 +245,13 @@ exports.createReopenComplaint = async (req, res) => {
 
       jobCard: jobCard._id,
 
-      previousWorker: complaint.assignedTo,
+      previousWorker,
 
       reopenReason,
 
       reopenCount: complaint.reopenCount,
 
-      priority: priority || "MEDIUM",
+      priority: priority || complaint.priority || "MEDIUM",
 
       managerNotes: managerNotes || "",
 
@@ -186,6 +259,58 @@ exports.createReopenComplaint = async (req, res) => {
 
       reopenedAt: new Date(),
     });
+
+    // ======================================
+    // FIND MAINTENANCE MANAGERS
+    // ======================================
+
+    const maintenanceManagers = await User.find({
+      role: "MAINTENANCE_MANAGER",
+
+      isActive: true,
+    }).select("_id");
+
+    // ======================================
+    // NOTIFY MAINTENANCE MANAGERS
+    // ======================================
+
+    if (maintenanceManagers.length > 0) {
+      await Promise.allSettled(
+        maintenanceManagers.map((manager) =>
+          safeSendNotification({
+            receiver: manager._id,
+
+            sender: req.user?._id || complaint.createdBy?._id || null,
+
+            title:
+              complaint.reopenCount >= 3
+                ? "Complaint Escalated"
+                : "Complaint Reopened",
+
+            message: `Complaint ${complaint.complaintId} has been reopened. Reason: ${reopenReason}`,
+
+            type: complaint.reopenCount >= 3 ? "ESCALATION" : "REOPEN",
+
+            priority:
+              complaint.reopenCount >= 3
+                ? "CRITICAL"
+                : getNotificationPriority(priority || complaint.priority),
+
+            relatedComplaint: complaint._id,
+
+            relatedId: reopenComplaint._id,
+
+            relatedModel: "ReopenComplaint",
+
+            actionUrl: "/maintenance/reopen-complaints",
+          }),
+        ),
+      );
+    }
+
+    // ======================================
+    // RESPONSE
+    // ======================================
 
     return res.status(201).json({
       success: true,
@@ -200,7 +325,7 @@ exports.createReopenComplaint = async (req, res) => {
     return res.status(500).json({
       success: false,
 
-      message: "Failed to reopen complaint",
+      message: error.message || "Failed to reopen complaint",
     });
   }
 };
@@ -249,6 +374,8 @@ exports.reassignWorker = async (req, res) => {
       _id: workerId,
 
       role: "WORKER",
+
+      isActive: true,
     });
 
     if (!worker) {
@@ -256,6 +383,20 @@ exports.reassignWorker = async (req, res) => {
         success: false,
 
         message: "Worker not found",
+      });
+    }
+
+    // ======================================
+    // FIND COMPLAINT
+    // ======================================
+
+    const complaint = await Complaint.findById(reopenComplaint.complaint);
+
+    if (!complaint) {
+      return res.status(404).json({
+        success: false,
+
+        message: "Complaint not found",
       });
     }
 
@@ -273,15 +414,13 @@ exports.reassignWorker = async (req, res) => {
     // UPDATE COMPLAINT
     // ======================================
 
-    const complaint = await Complaint.findById(reopenComplaint.complaint);
+    complaint.assignedTo = workerId;
 
-    if (complaint) {
-      complaint.assignedTo = workerId;
+    complaint.status = "IN_PROGRESS";
 
-      complaint.status = "IN_PROGRESS";
+    complaint.startedAt = new Date();
 
-      await complaint.save();
-    }
+    await complaint.save();
 
     // ======================================
     // UPDATE JOB CARD
@@ -296,8 +435,52 @@ exports.reassignWorker = async (req, res) => {
 
       jobCard.workerStatus = "WORKING";
 
+      jobCard.isCompleted = false;
+
+      jobCard.completedAt = null;
+
+      const jobComplaint = jobCard.complaints.find(
+        (item) => String(item.complaint) === String(complaint._id),
+      );
+
+      if (jobComplaint) {
+        jobComplaint.status = "IN_PROGRESS";
+
+        jobComplaint.startedAt = new Date();
+
+        jobComplaint.completedAt = null;
+      }
+
       await jobCard.save();
     }
+
+    // ======================================
+    // NOTIFY NEW WORKER
+    // ======================================
+
+    await safeSendNotification({
+      receiver: worker._id,
+
+      sender: req.user?._id || null,
+
+      title: "Reopened Complaint Assigned",
+
+      message: `Reopened complaint ${complaint.complaintId} has been assigned to you.`,
+
+      type: "WORKER_ASSIGN",
+
+      priority: getNotificationPriority(
+        reopenComplaint.priority || complaint.priority,
+      ),
+
+      relatedComplaint: complaint._id,
+
+      relatedId: reopenComplaint._id,
+
+      relatedModel: "ReopenComplaint",
+
+      actionUrl: "/dashboard",
+    });
 
     // ======================================
     // RESPONSE
@@ -314,7 +497,7 @@ exports.reassignWorker = async (req, res) => {
     return res.status(500).json({
       success: false,
 
-      message: "Failed to reassign worker",
+      message: error.message || "Failed to reassign worker",
     });
   }
 };

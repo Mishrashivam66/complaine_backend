@@ -5,7 +5,7 @@ const User = require("../../models/User");
 // ==========================================
 // CREATE GROUPED JOB CARD
 // ==========================================
-
+const sendNotification = require("../../utils/sendNotification");
 exports.createJobCard = async (req, res) => {
   try {
     const { complaintIds } = req.body;
@@ -900,6 +900,10 @@ exports.markJobCardPrinted = async (req, res) => {
 // VERIFY + COMPLETE SELECTED COMPLAINTS
 // MAINTENANCE MANAGER VERIFICATION PAGE
 // ==========================================
+// ==========================================
+// VERIFY + COMPLETE SELECTED COMPLAINTS
+// MAINTENANCE MANAGER VERIFICATION PAGE
+// ==========================================
 
 exports.completeSelectedComplaints = async (req, res) => {
   try {
@@ -951,7 +955,7 @@ exports.completeSelectedComplaints = async (req, res) => {
     }
 
     // ======================================
-    // CHECK COMPLAINTS BELONG TO THIS JOB CARD
+    // CHECK COMPLAINTS BELONG TO JOB CARD
     // ======================================
 
     const selectedItems = jobCard.complaints.filter((item) =>
@@ -967,10 +971,7 @@ exports.completeSelectedComplaints = async (req, res) => {
     }
 
     // ======================================
-    // ONLY NEWLY COMPLETED COMPLAINTS
-    // IMPORTANT:
-    // prevents worker.currentJobs from
-    // decreasing twice
+    // ONLY NEWLY COMPLETED
     // ======================================
 
     const newlyCompletedIds = selectedItems
@@ -985,6 +986,29 @@ exports.completeSelectedComplaints = async (req, res) => {
     }
 
     const now = new Date();
+
+    // ======================================
+    // FETCH COMPLAINTS BEFORE UPDATE
+    //
+    // STUDENT IDs + COMPLAINT DETAILS
+    // NOTIFICATION KE LIYE
+    // ======================================
+
+    const complaintsToComplete = await Complaint.find({
+      _id: {
+        $in: newlyCompletedIds,
+      },
+    })
+      .select(
+        `
+            complaintId
+            title
+            category
+            priority
+            createdBy
+          `,
+      )
+      .populate("createdBy", "name");
 
     // ======================================
     // UPDATE COMPLAINTS INSIDE JOB CARD
@@ -1002,7 +1026,7 @@ exports.completeSelectedComplaints = async (req, res) => {
 
     // ======================================
     // UPDATE ORIGINAL COMPLAINT COLLECTION
-    // THIS WILL UPDATE STUDENT/MM/WORKER UI
+    // FINAL COMPLETION
     // ======================================
 
     await Complaint.updateMany(
@@ -1011,6 +1035,7 @@ exports.completeSelectedComplaints = async (req, res) => {
           $in: newlyCompletedIds,
         },
       },
+
       {
         $set: {
           status: "COMPLETED",
@@ -1080,6 +1105,64 @@ exports.completeSelectedComplaints = async (req, res) => {
     // ======================================
 
     await jobCard.save();
+
+    // ======================================
+    // FINAL COMPLETION NOTIFICATION
+    // STUDENT KO
+    //
+    // IMPORTANT:
+    // SIRF MAINTENANCE MANAGER FINAL
+    // VERIFICATION KE BAAD YE JAYEGA
+    // ======================================
+
+    await Promise.allSettled(
+      complaintsToComplete.map(async (complaint) => {
+        const studentId = complaint.createdBy?._id;
+
+        if (!studentId) {
+          return;
+        }
+
+        let notificationPriority = "MEDIUM";
+
+        if (complaint.priority === "URGENT") {
+          notificationPriority = "CRITICAL";
+        } else if (complaint.priority === "HIGH") {
+          notificationPriority = "HIGH";
+        } else if (complaint.priority === "LOW") {
+          notificationPriority = "LOW";
+        }
+
+        try {
+          await sendNotification({
+            receiver: studentId,
+
+            sender: req.user._id,
+
+            title: "Complaint Completed",
+
+            message: `Your complaint ${complaint.complaintId} (${complaint.title || complaint.category || "Maintenance Complaint"}) has been verified and completed successfully.`,
+
+            type: "STATUS_UPDATE",
+
+            priority: notificationPriority,
+
+            relatedComplaint: complaint._id,
+
+            relatedId: complaint._id,
+
+            relatedModel: "Complaint",
+
+            actionUrl: "/dashboard",
+          });
+        } catch (notificationError) {
+          console.log(
+            "COMPLETION NOTIFICATION ERROR:",
+            notificationError.message,
+          );
+        }
+      }),
+    );
 
     // ======================================
     // POPULATE RESPONSE

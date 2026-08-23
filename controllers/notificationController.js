@@ -6,42 +6,72 @@ const Notification = require("../models/Notification");
 
 const getMyNotifications = async (req, res) => {
   try {
-    const page = Number(req.query.page) || 1;
-    const limit = Number(req.query.limit) || 20;
+    const page = Math.max(1, Number(req.query.page) || 1);
+
+    const limit = Math.min(50, Math.max(1, Number(req.query.limit) || 20));
+
     const skip = (page - 1) * limit;
 
-    const notifications = await Notification.find({
-      receiver: req.user._id,
-    })
-      .sort({
-        createdAt: -1,
+    // ======================================
+    // FETCH NOTIFICATIONS + COUNTS
+    // ======================================
+
+    const [notifications, unreadCount, totalNotifications] = await Promise.all([
+      // ====================================
+      // NOTIFICATIONS
+      // ====================================
+
+      Notification.find({
+        receiver: req.user._id,
       })
-      .populate("sender", "name role profilePhoto")
-      .skip(skip)
-      .limit(limit);
+        .sort({
+          createdAt: -1,
+        })
+        .populate("sender", "name role profilePhoto")
+        .skip(skip)
+        .limit(limit),
 
-    const unreadCount = await Notification.countDocuments({
-      receiver: req.user._id,
-      isRead: false,
-    });
+      // ====================================
+      // UNREAD COUNT
+      // ====================================
 
-    const totalNotifications = await Notification.countDocuments({
-      receiver: req.user._id,
-    });
+      Notification.countDocuments({
+        receiver: req.user._id,
+        isRead: false,
+      }),
 
-    res.status(200).json({
+      // ====================================
+      // TOTAL COUNT
+      // ====================================
+
+      Notification.countDocuments({
+        receiver: req.user._id,
+      }),
+    ]);
+
+    // ======================================
+    // RESPONSE
+    // ======================================
+
+    return res.status(200).json({
       success: true,
+
       currentPage: page,
+
       totalPages: Math.ceil(totalNotifications / limit),
+
       totalNotifications,
+
       unreadCount,
+
       notifications,
     });
   } catch (error) {
-    console.log(error);
+    console.log("GET NOTIFICATIONS ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
+
       message: "Failed to fetch notifications",
     });
   }
@@ -55,98 +85,80 @@ const getUnreadCount = async (req, res) => {
   try {
     const unreadCount = await Notification.countDocuments({
       receiver: req.user._id,
+
       isRead: false,
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
+
       unreadCount,
     });
   } catch (error) {
-    console.log(error);
+    console.log("GET UNREAD COUNT ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
+
       message: "Failed to fetch unread count",
     });
   }
 };
 
 // ==========================================
-// MARK AS READ
+// MARK SINGLE NOTIFICATION AS READ
 // ==========================================
 
 const markAsRead = async (req, res) => {
   try {
-    const notification = await Notification.findById(req.params.id);
+    const notification = await Notification.findOneAndUpdate(
+      {
+        _id: req.params.id,
+
+        receiver: req.user._id,
+      },
+
+      {
+        $set: {
+          isRead: true,
+        },
+      },
+
+      {
+        new: true,
+      },
+    ).populate("sender", "name role profilePhoto");
+
+    // ======================================
+    // NOT FOUND
+    // ======================================
 
     if (!notification) {
       return res.status(404).json({
         success: false,
+
         message: "Notification not found",
       });
     }
 
-    if (notification.receiver.toString() !== req.user._id.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: "Unauthorized",
-      });
-    }
+    // ======================================
+    // RESPONSE
+    // ======================================
 
-    notification.isRead = true;
-
-    await notification.save();
-
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
+
       message: "Notification marked as read",
+
       notification,
     });
   } catch (error) {
-    console.log(error);
+    console.log("MARK NOTIFICATION READ ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
+
       message: "Failed to update notification",
-    });
-  }
-};
-
-// ==========================================
-// DELETE NOTIFICATION
-// ==========================================
-
-const deleteNotification = async (req, res) => {
-  try {
-    const notification = await Notification.findById(req.params.id);
-
-    if (!notification) {
-      return res.status(404).json({
-        success: false,
-        message: "Notification not found",
-      });
-    }
-
-    if (notification.receiver.toString() !== req.user._id.toString()) {
-      return res.status(403).json({
-        success: false,
-        message: "Unauthorized",
-      });
-    }
-
-    await notification.deleteOne();
-
-    res.status(200).json({
-      success: true,
-      message: "Notification deleted successfully",
-    });
-  } catch (error) {
-    console.log(error);
-
-    res.status(500).json({
-      success: false,
-      message: "Failed to delete notification",
     });
   }
 };
@@ -157,26 +169,70 @@ const deleteNotification = async (req, res) => {
 
 const markAllAsRead = async (req, res) => {
   try {
-    await Notification.updateMany(
+    const result = await Notification.updateMany(
       {
         receiver: req.user._id,
+
         isRead: false,
       },
+
       {
-        isRead: true,
+        $set: {
+          isRead: true,
+        },
       },
     );
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
+
       message: "All notifications marked as read",
+
+      updatedCount: result.modifiedCount || 0,
     });
   } catch (error) {
-    console.log(error);
+    console.log("MARK ALL READ ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
+
       message: "Failed to update notifications",
+    });
+  }
+};
+
+// ==========================================
+// DELETE SINGLE NOTIFICATION
+// ==========================================
+
+const deleteNotification = async (req, res) => {
+  try {
+    const notification = await Notification.findOneAndDelete({
+      _id: req.params.id,
+
+      receiver: req.user._id,
+    });
+
+    if (!notification) {
+      return res.status(404).json({
+        success: false,
+
+        message: "Notification not found",
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+
+      message: "Notification deleted successfully",
+    });
+  } catch (error) {
+    console.log("DELETE NOTIFICATION ERROR:", error);
+
+    return res.status(500).json({
+      success: false,
+
+      message: "Failed to delete notification",
     });
   }
 };
@@ -187,72 +243,42 @@ const markAllAsRead = async (req, res) => {
 
 const clearAllNotifications = async (req, res) => {
   try {
-    await Notification.deleteMany({
+    const result = await Notification.deleteMany({
       receiver: req.user._id,
     });
 
-    res.status(200).json({
+    return res.status(200).json({
       success: true,
+
       message: "All notifications cleared",
+
+      deletedCount: result.deletedCount || 0,
     });
   } catch (error) {
-    console.log(error);
+    console.log("CLEAR NOTIFICATIONS ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
+
       message: "Failed to clear notifications",
     });
   }
 };
 
 // ==========================================
-// CREATE NOTIFICATION
+// EXPORTS
 // ==========================================
-
-const sendNotification = async ({
-  receiver,
-  sender = null,
-  title,
-  message,
-  type = "SYSTEM",
-  priority = "LOW",
-  relatedComplaint = null,
-  relatedId = null,
-  relatedModel = null,
-  actionUrl = "/dashboard",
-  isPermanent = false,
-}) => {
-  try {
-    const notification = await Notification.create({
-      receiver,
-      sender,
-      title,
-      message,
-      type,
-      priority,
-      relatedComplaint,
-      relatedId,
-      relatedModel,
-      actionUrl,
-      isPermanent,
-    });
-
-    await notification.populate("sender", "name role profilePhoto");
-
-    return notification;
-  } catch (error) {
-    console.log("Notification Error:", error.message);
-
-    return null;
-  }
-};
 
 module.exports = {
   getMyNotifications,
+
   getUnreadCount,
+
   markAsRead,
-  deleteNotification,
+
   markAllAsRead,
+
+  deleteNotification,
+
   clearAllNotifications,
-  sendNotification,
 };

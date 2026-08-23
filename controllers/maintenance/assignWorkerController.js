@@ -15,6 +15,41 @@ const sendNotification = require("../../utils/sendNotification");
 const MAX_JOBS = 10;
 
 // ==========================================
+// NOTIFICATION PRIORITY
+// ==========================================
+
+const getNotificationPriority = (priority) => {
+  switch (String(priority || "").toUpperCase()) {
+    case "URGENT":
+      return "CRITICAL";
+
+    case "HIGH":
+      return "HIGH";
+
+    case "MEDIUM":
+      return "MEDIUM";
+
+    default:
+      return "LOW";
+  }
+};
+
+// ==========================================
+// SAFE NOTIFICATION
+//
+// Notification fail hone par main workflow
+// fail nahi hoga
+// ==========================================
+
+const safeSendNotification = async (data) => {
+  try {
+    await sendNotification(data);
+  } catch (error) {
+    console.log("ASSIGN WORKER NOTIFICATION ERROR:", error.message);
+  }
+};
+
+// ==========================================
 // GET ALL COMPLAINTS
 // ==========================================
 
@@ -33,7 +68,9 @@ exports.getComplaintsForAssignment = async (req, res) => {
 
     return res.status(200).json({
       success: true,
+
       count: complaints.length,
+
       complaints,
     });
   } catch (error) {
@@ -41,6 +78,7 @@ exports.getComplaintsForAssignment = async (req, res) => {
 
     return res.status(500).json({
       success: false,
+
       message: "Failed to fetch complaints",
     });
   }
@@ -54,6 +92,7 @@ exports.getWorkers = async (req, res) => {
   try {
     const workers = await User.find({
       role: "WORKER",
+
       isActive: true,
     }).select(`
       name
@@ -66,7 +105,9 @@ exports.getWorkers = async (req, res) => {
 
     return res.status(200).json({
       success: true,
+
       count: workers.length,
+
       workers,
     });
   } catch (error) {
@@ -74,6 +115,7 @@ exports.getWorkers = async (req, res) => {
 
     return res.status(500).json({
       success: false,
+
       message: "Failed to fetch workers",
     });
   }
@@ -94,13 +136,14 @@ exports.assignWorker = async (req, res) => {
     if (!complaintId || !workerId) {
       return res.status(400).json({
         success: false,
+
         message: "Complaint ID and Worker ID are required",
       });
     }
 
     // ======================================
     // FIND COMPLAINT
-    // STUDENT PHONE ALSO POPULATED
+    // STUDENT CONTACT INCLUDED
     // ======================================
 
     const complaint = await Complaint.findById(complaintId).populate(
@@ -111,6 +154,7 @@ exports.assignWorker = async (req, res) => {
     if (!complaint) {
       return res.status(404).json({
         success: false,
+
         message: "Complaint not found",
       });
     }
@@ -121,13 +165,16 @@ exports.assignWorker = async (req, res) => {
 
     const worker = await User.findOne({
       _id: workerId,
+
       role: "WORKER",
+
       isActive: true,
     });
 
     if (!worker) {
       return res.status(404).json({
         success: false,
+
         message: "Worker not found",
       });
     }
@@ -139,6 +186,7 @@ exports.assignWorker = async (req, res) => {
     if (complaint.assignedTo) {
       return res.status(400).json({
         success: false,
+
         message: "Complaint already assigned",
       });
     }
@@ -154,6 +202,7 @@ exports.assignWorker = async (req, res) => {
     if (!categoryData) {
       return res.status(400).json({
         success: false,
+
         message: "Category configuration not found",
       });
     }
@@ -169,6 +218,7 @@ exports.assignWorker = async (req, res) => {
     if (complaintCategory !== workerDepartment) {
       return res.status(400).json({
         success: false,
+
         message: "Worker department does not match complaint category",
       });
     }
@@ -202,12 +252,13 @@ exports.assignWorker = async (req, res) => {
 
     // ======================================
     // STUDENT CONTACT
-    // ONLY RESPONSE / FUTURE JOB CARD USE
     // ======================================
 
     const studentName = complaint.createdBy?.name || "";
 
     const studentPhone = complaint.createdBy?.phone || "";
+
+    const studentId = complaint.createdBy?._id;
 
     // ======================================
     // ASSIGN WORKER
@@ -220,9 +271,10 @@ exports.assignWorker = async (req, res) => {
     complaint.workerAssigned = true;
 
     // ======================================
-    // IMPORTANT
-    // WORKER ASSIGNED
-    // NOW MOVE TO ASSIGNED JOBS PAGE
+    // CURRENT FLOW
+    //
+    // Worker assign hone ke baad complaint
+    // Assigned Jobs page par jayegi.
     // ======================================
 
     complaint.status = "IN_PROGRESS";
@@ -231,7 +283,7 @@ exports.assignWorker = async (req, res) => {
 
     // ======================================
     // MATERIAL DECISION
-    // ASSIGNED JOBS PAGE WILL HANDLE THIS
+    // ASSIGNED JOBS PAGE WILL HANDLE
     // ======================================
 
     complaint.materialDecision = "PENDING";
@@ -243,50 +295,68 @@ exports.assignWorker = async (req, res) => {
     // ======================================
     // IMPORTANT
     //
-    // DO NOT CREATE JOB CARD HERE
+    // JOBCARD YAHAN CREATE NAHI HOGA.
     //
-    // JOB CARD WILL BE CREATED ONLY AFTER
-    // MATERIAL YES / NO DECISION FROM
-    // ASSIGNED JOBS PAGE
+    // Assigned Jobs
+    //      ↓
+    // Material YES / NO
+    //      ↓
+    // Ready
+    //      ↓
+    // Job Card Create
     // ======================================
 
     // ======================================
-    // NOTIFY WORKER
+    // WORKER NOTIFICATION
     // ======================================
 
-    await sendNotification({
+    await safeSendNotification({
       receiver: worker._id,
 
       sender: req.user._id,
 
       title: "New Complaint Assigned",
 
-      message: `Complaint ${complaint.complaintId} assigned to you`,
+      message: `Complaint ${complaint.complaintId} (${complaint.title || complaint.subCategory || complaint.category}) has been assigned to you.`,
 
       type: "WORKER_ASSIGN",
 
+      priority: getNotificationPriority(complaint.priority),
+
       relatedComplaint: complaint._id,
+
+      relatedId: complaint._id,
+
+      relatedModel: "Complaint",
+
+      actionUrl: "/dashboard",
     });
 
     // ======================================
-    // NOTIFY STUDENT
+    // STUDENT NOTIFICATION
     // ======================================
 
-    const studentId = complaint.createdBy?._id;
-
     if (studentId) {
-      await sendNotification({
+      await safeSendNotification({
         receiver: studentId,
 
         sender: req.user._id,
 
         title: "Worker Assigned",
 
-        message: "Maintenance worker assigned successfully",
+        message: `${worker.name || "Maintenance worker"} has been assigned to your complaint ${complaint.complaintId}.`,
 
         type: "STATUS_UPDATE",
 
+        priority: "MEDIUM",
+
         relatedComplaint: complaint._id,
+
+        relatedId: complaint._id,
+
+        relatedModel: "Complaint",
+
+        actionUrl: "/dashboard",
       });
     }
 
@@ -356,7 +426,10 @@ exports.updateMaterialDecision = async (req, res) => {
     // FIND COMPLAINT
     // ======================================
 
-    const complaint = await Complaint.findById(complaintId);
+    const complaint = await Complaint.findById(complaintId).populate(
+      "assignedTo",
+      "name phone department",
+    );
 
     if (!complaint) {
       return res.status(404).json({
@@ -387,6 +460,40 @@ exports.updateMaterialDecision = async (req, res) => {
     complaint.materialRequired = decision === "REQUIRED";
 
     await complaint.save();
+
+    // ======================================
+    // WORKER NOTIFICATION
+    // ======================================
+
+    if (complaint.assignedTo?._id) {
+      await safeSendNotification({
+        receiver: complaint.assignedTo._id,
+
+        sender: req.user._id,
+
+        title:
+          decision === "REQUIRED"
+            ? "Material Required"
+            : "No Material Required",
+
+        message:
+          decision === "REQUIRED"
+            ? `Material is required for complaint ${complaint.complaintId}.`
+            : `Complaint ${complaint.complaintId} has been marked as not requiring material.`,
+
+        type: decision === "REQUIRED" ? "MATERIAL" : "STATUS_UPDATE",
+
+        priority: getNotificationPriority(complaint.priority),
+
+        relatedComplaint: complaint._id,
+
+        relatedId: complaint._id,
+
+        relatedModel: "Complaint",
+
+        actionUrl: "/dashboard",
+      });
+    }
 
     // ======================================
     // RESPONSE

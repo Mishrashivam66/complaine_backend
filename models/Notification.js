@@ -1,5 +1,9 @@
 const mongoose = require("mongoose");
 
+// ==========================================
+// NOTIFICATION SCHEMA
+// ==========================================
+
 const notificationSchema = new mongoose.Schema(
   {
     // ==========================================
@@ -43,37 +47,23 @@ const notificationSchema = new mongoose.Schema(
 
       enum: [
         "SYSTEM",
-
         "COMPLAINT",
-
         "APPROVAL",
-
         "JOB_CARD",
-
         "MATERIAL",
-
         "INVENTORY",
-
         "HOSTEL",
-
         "OVERDUE",
-
         "HIGH_PRIORITY",
-
         "ANNOUNCEMENT",
 
         // OLD TYPES SUPPORT
 
         "WORKER_ASSIGN",
-
         "STATUS_UPDATE",
-
         "MATERIAL_REQUEST",
-
         "MATERIAL_APPROVED",
-
         "REOPEN",
-
         "ESCALATION",
       ],
 
@@ -93,7 +83,7 @@ const notificationSchema = new mongoose.Schema(
     },
 
     // ==========================================
-    // STATUS
+    // READ STATUS
     // ==========================================
 
     isRead: {
@@ -101,13 +91,8 @@ const notificationSchema = new mongoose.Schema(
       default: false,
     },
 
-    isPermanent: {
-      type: Boolean,
-      default: false,
-    },
-
     // ==========================================
-    // RELATED DATA
+    // RELATED COMPLAINT
     // ==========================================
 
     relatedComplaint: {
@@ -115,6 +100,10 @@ const notificationSchema = new mongoose.Schema(
       ref: "Complaint",
       default: null,
     },
+
+    // ==========================================
+    // GENERIC RELATED DATA
+    // ==========================================
 
     relatedId: {
       type: mongoose.Schema.Types.ObjectId,
@@ -124,6 +113,7 @@ const notificationSchema = new mongoose.Schema(
     relatedModel: {
       type: String,
       default: null,
+      trim: true,
     },
 
     // ==========================================
@@ -133,20 +123,17 @@ const notificationSchema = new mongoose.Schema(
     actionUrl: {
       type: String,
       default: "/dashboard",
+      trim: true,
     },
 
     // ==========================================
-    // AUTO DELETE
+    // AUTO DELETE AFTER 24 HOURS
     // ==========================================
 
     expiresAt: {
       type: Date,
 
-      default: function () {
-        return this.isPermanent
-          ? null
-          : new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
-      },
+      default: () => new Date(Date.now() + 24 * 60 * 60 * 1000),
     },
   },
 
@@ -156,33 +143,44 @@ const notificationSchema = new mongoose.Schema(
 );
 
 // ==========================================
-// TTL INDEX (AUTO DELETE AFTER 7 DAYS)
+// TTL INDEX
+//
+// MongoDB will automatically delete
+// every notification after expiresAt
 // ==========================================
 
 notificationSchema.index(
-  { expiresAt: 1 },
+  {
+    expiresAt: 1,
+  },
 
-  { expireAfterSeconds: 0 },
-);
-// ==========================================
-// REMOVE expiresAt FOR PERMANENT NOTIFICATIONS
-// ==========================================
-
-// ==========================================
-// REMOVE expiresAt FOR PERMANENT NOTIFICATIONS
-// ==========================================
-
-notificationSchema.pre(
-  "save",
-
-  function () {
-    if (this.isPermanent) {
-      this.expiresAt = null;
-    }
+  {
+    expireAfterSeconds: 0,
   },
 );
-module.exports = mongoose.model(
-  "Notification",
 
-  notificationSchema,
-);
+// ==========================================
+// PERFORMANCE INDEX
+// NOTIFICATION + UNREAD COUNT
+// ==========================================
+
+notificationSchema.index({
+  receiver: 1,
+  isRead: 1,
+  createdAt: -1,
+});
+
+// ==========================================
+// NOTIFICATION HISTORY INDEX
+// ==========================================
+
+notificationSchema.index({
+  receiver: 1,
+  createdAt: -1,
+});
+
+// ==========================================
+// EXPORT
+// ==========================================
+
+module.exports = mongoose.model("Notification", notificationSchema);
