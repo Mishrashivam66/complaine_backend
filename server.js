@@ -101,6 +101,8 @@ const commonRoutes = require("./routes/common/commonRoutes");
 // UTILS
 const startOverdueChecker = require("./utils/overdueChecker");
 
+const publicRoutes = require("./routes/public/publicRoutes");
+
 // ==========================================
 // AUTH ROUTES
 // ==========================================
@@ -182,6 +184,8 @@ app.use("/api/store", storeRoutes);
 // ==========================================
 
 app.use("/api/common", commonRoutes);
+
+app.use("/api/public", publicRoutes);
 
 // ==========================================
 // TEST ROUTE
