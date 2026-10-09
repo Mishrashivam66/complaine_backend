@@ -12,7 +12,16 @@ exports.createUser = async (req, res) => {
     // REQUIRED FIELDS
     // ==========================================
 
-    if (!name || !email || !password || !role) {
+    if (
+      typeof name !== "string" ||
+      !name.trim() ||
+      typeof email !== "string" ||
+      !email.trim() ||
+      typeof password !== "string" ||
+      !password ||
+      typeof role !== "string" ||
+      !role.trim()
+    ) {
       return res.status(400).json({
         success: false,
         message: "Name, email, password and role are required",
@@ -20,21 +29,51 @@ exports.createUser = async (req, res) => {
     }
 
     // ==========================================
+    // NORMALIZE INPUT
+    // ==========================================
+
+    const normalizedName = name.trim();
+    const normalizedEmail = email.trim().toLowerCase();
+    const normalizedRole = role.trim().toUpperCase();
+
+    // ==========================================
     // RESTRICT SPECIAL ROLES
     // ==========================================
 
-    if (role === "WARDEN") {
+    if (normalizedRole === "WARDEN") {
       return res.status(403).json({
         success: false,
         message: "Warden accounts can only be created by the Hostel Director",
       });
     }
 
-    if (role === "ADMIN" || role === "HOSTEL_DIRECTOR") {
+    if (
+      normalizedRole === "ADMIN" ||
+      normalizedRole === "SUPER_ADMIN" ||
+      normalizedRole === "HOSTEL_DIRECTOR"
+    ) {
       return res.status(403).json({
         success: false,
         message:
           "Admin and Hostel Director accounts cannot be created from this panel",
+      });
+    }
+
+    // ==========================================
+    // ALLOWED ADMIN-CREATED ROLES
+    // ==========================================
+
+    const allowedRoles = [
+      "MAINTENANCE_MANAGER",
+      "STORE_MANAGER",
+      "MESS_MANAGER",
+      "BLOCK_ADMIN",
+    ];
+
+    if (!allowedRoles.includes(normalizedRole)) {
+      return res.status(403).json({
+        success: false,
+        message: "This role cannot be created from the Admin panel",
       });
     }
 
@@ -44,7 +83,7 @@ exports.createUser = async (req, res) => {
 
     let normalizedBlock = "";
 
-    if (role === "BLOCK_ADMIN") {
+    if (normalizedRole === "BLOCK_ADMIN") {
       if (typeof assignedBlock !== "string" || !assignedBlock.trim()) {
         return res.status(400).json({
           success: false,
@@ -65,10 +104,15 @@ exports.createUser = async (req, res) => {
     }
 
     // ==========================================
-    // NORMALIZE EMAIL
+    // PASSWORD VALIDATION
     // ==========================================
 
-    const normalizedEmail = email.trim().toLowerCase();
+    if (password.length < 8) {
+      return res.status(400).json({
+        success: false,
+        message: "Password must be at least 8 characters long",
+      });
+    }
 
     // ==========================================
     // CHECK EXISTING USER
@@ -79,47 +123,74 @@ exports.createUser = async (req, res) => {
     });
 
     if (userExists) {
-      return res.status(400).json({
+      return res.status(409).json({
         success: false,
         message: "User already exists",
       });
     }
 
     // ==========================================
-    // CREATE USER
+    // CREATE VERIFIED USER
     // ==========================================
 
     const userData = {
-      name: name.trim(),
+      name: normalizedName,
       email: normalizedEmail,
       password,
-      role,
+      role: normalizedRole,
+
+      // Admin-created accounts do not require
+      // email OTP verification.
+      isVerified: true,
+
+      // Account can log in immediately.
+      isActive: true,
+
+      // No pending verification tokens.
+      verificationToken: null,
+      verificationTokenExpire: null,
+      emailOTP: null,
+      emailOTPExpire: null,
     };
 
-    if (role === "BLOCK_ADMIN") {
+    // ==========================================
+    // ASSIGN BLOCK TO BLOCK ADMIN
+    // ==========================================
+
+    if (normalizedRole === "BLOCK_ADMIN") {
       userData.assignedBlock = normalizedBlock;
     }
 
+    // Password is hashed automatically by
+    // the pre("save") hook in User.js.
     const user = await User.create(userData);
 
     // ==========================================
     // SAFE RESPONSE
     // ==========================================
 
-    const safeUser = user.toObject();
-
-    delete safeUser.password;
-    delete safeUser.emailOTP;
-    delete safeUser.verificationToken;
-    delete safeUser.resetPasswordToken;
+    const safeUser = {
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+      assignedBlock: user.assignedBlock,
+      isVerified: user.isVerified,
+      isActive: user.isActive,
+      createdAt: user.createdAt,
+    };
 
     return res.status(201).json({
       success: true,
-      message: `${role} created successfully`,
+      message: `${normalizedRole} created successfully`,
       user: safeUser,
     });
   } catch (error) {
     console.error("ADMIN CREATE USER ERROR:", error);
+
+    // ==========================================
+    // DUPLICATE USER
+    // ==========================================
 
     if (error.code === 11000) {
       return res.status(409).json({
@@ -128,12 +199,20 @@ exports.createUser = async (req, res) => {
       });
     }
 
+    // ==========================================
+    // MONGOOSE VALIDATION ERROR
+    // ==========================================
+
     if (error.name === "ValidationError") {
       return res.status(400).json({
         success: false,
         message: error.message,
       });
     }
+
+    // ==========================================
+    // SERVER ERROR
+    // ==========================================
 
     return res.status(500).json({
       success: false,
