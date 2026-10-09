@@ -113,6 +113,16 @@ const userSchema = new mongoose.Schema(
       default: "",
     },
 
+    // ==========================================
+    // STUDENT DEPARTMENT BLOCK
+    // ==========================================
+
+    departmentBlock: {
+      type: String,
+      enum: ["", "A", "B", "C", "D", "E", "F"],
+      default: "",
+    },
+
     shift: {
       type: String,
       enum: ["DAY", "NIGHT", "24x7"],
