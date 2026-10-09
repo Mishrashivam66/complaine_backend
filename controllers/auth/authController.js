@@ -266,31 +266,22 @@ const loginUser = async (req, res) => {
 
       user: {
         _id: user._id,
-
         name: user.name,
-
         email: user.email,
-
         role: user.role,
-
         phone: user.phone,
 
         hostel: user.hostel,
-
         floor: user.floor,
-
         pocket: user.pocket,
-
         roomNumber: user.roomNumber,
 
         assignedHostel: user.assignedHostel,
+        assignedBlock: user.assignedBlock, // FIX
 
         isApproved: user.isApproved,
-
         permissionPending: user.permissionPending,
-
         isHosteller: user.isHosteller,
-
         profileEditLocked: user.profileEditLocked,
       },
     });
