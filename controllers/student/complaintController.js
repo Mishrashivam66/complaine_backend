@@ -198,39 +198,26 @@ const createComplaint = async (req, res) => {
     // ======================================
 
     if (complaintArea === "DEPARTMENT") {
-      const department = String(student.department || "").trim();
-
-      const departmentBlock = String(student.departmentBlock || "")
+      const selectedBlock = String(req.body.block || "")
         .trim()
-        .toUpperCase();
+        .toUpperCase()
+        .replace(/^BLOCK\s+/, "")
+        .replace(/\s+BLOCK$/, "");
 
-      if (!department) {
+      if (!["A", "B", "C", "D", "E", "F"].includes(selectedBlock)) {
         return res.status(400).json({
           success: false,
-          message: "Your department is not assigned. Please contact Admin.",
+          message: "Please select a valid department block",
         });
       }
 
-      if (!["A", "B", "C", "D", "E", "F"].includes(departmentBlock)) {
-        return res.status(400).json({
-          success: false,
-          message:
-            "Your department block is not assigned. Please contact Admin.",
-        });
-      }
-
-      // IMPORTANT FIX:
-      // Department block comes from student profile,
-      // NOT from hostel block or request body.
-
-      complaintData.block = departmentBlock;
-      complaintData.assignedDepartment = department;
+      complaintData.block = selectedBlock;
+      complaintData.assignedDepartment = String(
+        student.department || "",
+      ).trim();
 
       complaintData.hostel = "";
       complaintData.roomNumber = "";
-
-      delete complaintData.availableFrom;
-      delete complaintData.availableTo;
     }
 
     // ======================================

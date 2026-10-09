@@ -6,56 +6,61 @@ const User = require("../../models/User");
 
 const updateStudentProfile = async (req, res) => {
   try {
-    // ==========================================
-    // FIND USER
-    // ==========================================
-
     const user = await User.findById(req.user.id);
 
     if (!user) {
       return res.status(404).json({
         success: false,
-
         message: "User not found",
       });
     }
 
+    if (user.role !== "STUDENT") {
+      return res.status(403).json({
+        success: false,
+        message: "Only students can update student profiles",
+      });
+    }
+
+    const wasLocked = user.profileEditLocked;
+
     // ==========================================
-    // PERSONAL + ACADEMIC
-    // ONLY ONE TIME EDIT
+    // PERSONAL + ACADEMIC - ONE TIME EDIT
     // ==========================================
 
-    if (!user.profileEditLocked) {
-      // ==========================================
-      // PERSONAL INFO
-      // ==========================================
+    if (!wasLocked) {
+      const updateFields = [
+        "name",
+        "phone",
+        "parentPhone",
+        "emergencyContact",
+        "amizoneId",
+        "course",
+        "year",
+        "section",
+        "department",
+      ];
 
-      user.name = req.body.name || user.name;
+      for (const field of updateFields) {
+        if (req.body[field] !== undefined) {
+          user[field] =
+            typeof req.body[field] === "string"
+              ? req.body[field].trim()
+              : req.body[field];
+        }
+      }
 
-      user.phone = req.body.phone || user.phone;
+      // Department is necessary before locking.
+      if (!String(user.department || "").trim()) {
+        return res.status(400).json({
+          success: false,
+          message: "Please select your department before saving your profile.",
+        });
+      }
 
-      user.parentPhone = req.body.parentPhone || user.parentPhone;
-
-      user.emergencyContact =
-        req.body.emergencyContact || user.emergencyContact;
-
-      // ==========================================
-      // ACADEMIC INFO
-      // ==========================================
-
-      user.amizoneId = req.body.amizoneId || user.amizoneId;
-
-      user.course = req.body.course || user.course;
-
-      user.year = req.body.year || user.year;
-
-      user.section = req.body.section || user.section;
-
-      user.department = req.body.department || user.department;
-
-      // ==========================================
-      // LOCK PROFILE
-      // ==========================================
+      // Academic department block is optional here.
+      // It must be assigned from a trusted source,
+      // not silently copied from hostel block.
 
       user.profileEditLocked = true;
     }
@@ -64,41 +69,38 @@ const updateStudentProfile = async (req, res) => {
     // SEMESTER ALWAYS EDITABLE
     // ==========================================
 
-    user.semester = req.body.semester || user.semester;
-
-    // ==========================================
-    // SAVE USER
-    // ==========================================
+    if (req.body.semester !== undefined) {
+      user.semester = String(req.body.semester).trim();
+    }
 
     await user.save();
 
-    // ==========================================
-    // RESPONSE
-    // ==========================================
+    const safeUser = user.toObject();
 
-    res.status(200).json({
+    delete safeUser.password;
+    delete safeUser.emailOTP;
+    delete safeUser.verificationToken;
+    delete safeUser.resetPasswordToken;
+    delete safeUser.resetPasswordExpires;
+    delete safeUser.emailOTPExpire;
+    delete safeUser.verificationTokenExpire;
+
+    return res.status(200).json({
       success: true,
-
-      message: user.profileEditLocked
-        ? "Profile updated successfully"
-        : "Semester updated successfully",
-
-      user,
+      message: wasLocked
+        ? "Semester updated successfully"
+        : "Profile updated successfully",
+      user: safeUser,
     });
   } catch (error) {
-    console.log(error);
+    console.error("UPDATE STUDENT PROFILE ERROR:", error);
 
-    res.status(500).json({
+    return res.status(500).json({
       success: false,
-
-      message: error.message,
+      message: "Unable to update profile",
     });
   }
 };
-
-// ==========================================
-// EXPORT
-// ==========================================
 
 module.exports = {
   updateStudentProfile,
