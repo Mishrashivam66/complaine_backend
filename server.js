@@ -89,6 +89,12 @@ const messRoutes = require("./routes/student/messRoutes");
 const wardenRoutes = require("./routes/warden/wardenRoutes");
 const roomAllocationRoutes = require("./routes/warden/roomAllocationRoutes");
 
+// ==========================================
+// BLOCK ADMIN
+// ==========================================
+
+const blockAdminRoutes = require("./routes/blockAdmin/blockAdminRoutes");
+
 // MAINTENANCE
 const maintenanceRoutes = require("./routes/maintenance/maintenanceRoutes");
 
@@ -166,6 +172,12 @@ app.use("/api/student/mess", messRoutes);
 app.use("/api/warden", wardenRoutes);
 
 app.use("/api/warden/rooms", roomAllocationRoutes);
+
+// ==========================================
+// BLOCK ADMIN ROUTES
+// ==========================================
+
+app.use("/api/block-admin", blockAdminRoutes);
 
 // ==========================================
 // MAINTENANCE ROUTES

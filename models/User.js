@@ -87,33 +87,21 @@ const userSchema = new mongoose.Schema(
 
     role: {
       type: String,
-
       enum: [
         "ADMIN",
-
+        "BLOCK_ADMIN",
         "HOSTEL_DIRECTOR",
-
         "WARDEN",
-
         "MAINTENANCE_MANAGER",
-
         "STORE_MANAGER",
-
         "HOUSEKEEPING_HEAD",
-
         "IT_HEAD",
-
         "WORKER",
-
         "STUDENT",
-
         "FACULTY",
-
         "ADMIN_STAFF",
-
         "MESS_MANAGER",
       ],
-
       default: "STUDENT",
     },
     // ==========================================
@@ -209,6 +197,21 @@ const userSchema = new mongoose.Schema(
     assignedHostel: {
       type: String,
       default: "",
+    },
+
+    assignedBlock: {
+      type: String,
+      enum: ["", "A", "B", "C", "D", "E", "F"],
+      default: "",
+      validate: {
+        validator: function (value) {
+          if (this.role === "BLOCK_ADMIN") {
+            return ["A", "B", "C", "D", "E", "F"].includes(value);
+          }
+          return true;
+        },
+        message: "Block Admin must be assigned a valid block",
+      },
     },
 
     designation: {
