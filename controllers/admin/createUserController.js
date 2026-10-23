@@ -1,16 +1,30 @@
-const User = require("../../models/User");
+"use strict";
 
-// ==========================================
-// CREATE USER - ADMIN
-// ==========================================
+const User = require("../../models/User");
+const Block = require("../../models/Block");
+
+const ALLOWED = new Set([
+  "ADMIN",
+  "MAINTENANCE_MANAGER",
+  "STORE_MANAGER",
+  "BLOCK_ADMIN",
+]);
 
 exports.createUser = async (req, res) => {
   try {
-    const { name, email, password, role, assignedBlock } = req.body;
+    // Defense in depth.
+    if (
+      req.user?.role !== "ADMIN" ||
+      req.user?.isActive === false ||
+      req.user?.isDeleted === true
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Only an active Admin can create users",
+      });
+    }
 
-    // ==========================================
-    // REQUIRED FIELDS
-    // ==========================================
+    const { name, email, password, role, assignedBlock } = req.body || {};
 
     if (
       typeof name !== "string" ||
@@ -18,7 +32,6 @@ exports.createUser = async (req, res) => {
       typeof email !== "string" ||
       !email.trim() ||
       typeof password !== "string" ||
-      !password ||
       typeof role !== "string" ||
       !role.trim()
     ) {
@@ -28,195 +41,116 @@ exports.createUser = async (req, res) => {
       });
     }
 
-    // ==========================================
-    // NORMALIZE INPUT
-    // ==========================================
-
-    const normalizedName = name.trim();
     const normalizedEmail = email.trim().toLowerCase();
+
     const normalizedRole = role.trim().toUpperCase();
 
-    // ==========================================
-    // RESTRICT SPECIAL ROLES
-    // ==========================================
-
-    if (normalizedRole === "WARDEN") {
+    if (!ALLOWED.has(normalizedRole)) {
       return res.status(403).json({
         success: false,
-        message: "Warden accounts can only be created by the Hostel Director",
+        message: "Role not permitted in Admin Create Users",
       });
     }
 
-    if (
-      normalizedRole === "ADMIN" ||
-      normalizedRole === "SUPER_ADMIN" ||
-      normalizedRole === "HOSTEL_DIRECTOR"
-    ) {
-      return res.status(403).json({
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(normalizedEmail)) {
+      return res.status(400).json({
         success: false,
-        message:
-          "Admin and Hostel Director accounts cannot be created from this panel",
+        message: "Enter a valid email address",
       });
     }
 
-    // ==========================================
-    // ALLOWED ADMIN-CREATED ROLES
-    // ==========================================
-
-    const allowedRoles = [
-      "MAINTENANCE_MANAGER",
-      "STORE_MANAGER",
-      "MESS_MANAGER",
-      "BLOCK_ADMIN",
-    ];
-
-    if (!allowedRoles.includes(normalizedRole)) {
-      return res.status(403).json({
+    if (password.length < 8) {
+      return res.status(400).json({
         success: false,
-        message: "This role cannot be created from the Admin panel",
+        message: "Password must be at least 8 characters",
       });
     }
 
-    // ==========================================
-    // BLOCK ADMIN VALIDATION
-    // ==========================================
-
-    let normalizedBlock = "";
+    let blockCode = "";
 
     if (normalizedRole === "BLOCK_ADMIN") {
       if (typeof assignedBlock !== "string" || !assignedBlock.trim()) {
         return res.status(400).json({
           success: false,
-          message: "Please assign a block to the Block Admin",
+          message: "Assign a block to this Block Admin",
         });
       }
 
-      normalizedBlock = assignedBlock.trim().toUpperCase();
+      blockCode = assignedBlock.trim().toUpperCase();
 
-      const validBlocks = ["A", "B", "C", "D", "E", "F"];
+      const block = await Block.findOne({
+        code: blockCode,
+        isActive: true,
+        isDeleted: { $ne: true },
+      })
+        .select("code")
+        .lean();
 
-      if (!validBlocks.includes(normalizedBlock)) {
+      if (!block) {
         return res.status(400).json({
           success: false,
-          message: "Invalid block selected",
+          message: "Select an active, configured academic block",
         });
       }
     }
 
-    // ==========================================
-    // PASSWORD VALIDATION
-    // ==========================================
-
-    if (password.length < 8) {
-      return res.status(400).json({
-        success: false,
-        message: "Password must be at least 8 characters long",
-      });
-    }
-
-    // ==========================================
-    // CHECK EXISTING USER
-    // ==========================================
-
-    const userExists = await User.findOne({
-      email: normalizedEmail,
-    });
-
-    if (userExists) {
+    if (
+      await User.exists({
+        email: normalizedEmail,
+      })
+    ) {
       return res.status(409).json({
         success: false,
-        message: "User already exists",
+        message: "An account with this email already exists",
       });
     }
 
-    // ==========================================
-    // CREATE VERIFIED USER
-    // ==========================================
-
-    const userData = {
-      name: normalizedName,
+    // Hashing happens in User pre-save hook.
+    const user = await User.create({
+      name: name.trim(),
       email: normalizedEmail,
       password,
       role: normalizedRole,
-
-      // Admin-created accounts do not require
-      // email OTP verification.
+      assignedBlock: blockCode,
       isVerified: true,
-
-      // Account can log in immediately.
+      isApproved: true,
       isActive: true,
-
-      // No pending verification tokens.
-      verificationToken: null,
-      verificationTokenExpire: null,
-      emailOTP: null,
-      emailOTPExpire: null,
-    };
-
-    // ==========================================
-    // ASSIGN BLOCK TO BLOCK ADMIN
-    // ==========================================
-
-    if (normalizedRole === "BLOCK_ADMIN") {
-      userData.assignedBlock = normalizedBlock;
-    }
-
-    // Password is hashed automatically by
-    // the pre("save") hook in User.js.
-    const user = await User.create(userData);
-
-    // ==========================================
-    // SAFE RESPONSE
-    // ==========================================
-
-    const safeUser = {
-      _id: user._id,
-      name: user.name,
-      email: user.email,
-      role: user.role,
-      assignedBlock: user.assignedBlock,
-      isVerified: user.isVerified,
-      isActive: user.isActive,
-      createdAt: user.createdAt,
-    };
+    });
 
     return res.status(201).json({
       success: true,
-      message: `${normalizedRole} created successfully`,
-      user: safeUser,
+      message: `${normalizedRole.replaceAll("_", " ")} account created`,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        assignedBlock: user.assignedBlock,
+        isActive: user.isActive,
+        isVerified: user.isVerified,
+        createdAt: user.createdAt,
+      },
     });
   } catch (error) {
-    console.error("ADMIN CREATE USER ERROR:", error);
-
-    // ==========================================
-    // DUPLICATE USER
-    // ==========================================
-
-    if (error.code === 11000) {
+    if (error?.code === 11000) {
       return res.status(409).json({
         success: false,
-        message: "User already exists",
+        message: "Account already exists",
       });
     }
 
-    // ==========================================
-    // MONGOOSE VALIDATION ERROR
-    // ==========================================
-
-    if (error.name === "ValidationError") {
+    if (error?.name === "ValidationError") {
       return res.status(400).json({
         success: false,
-        message: error.message,
+        message: "Invalid account details",
       });
     }
 
-    // ==========================================
-    // SERVER ERROR
-    // ==========================================
+    console.error("ADMIN CREATE USER:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Server Error",
+      message: "Unable to create user",
     });
   }
 };

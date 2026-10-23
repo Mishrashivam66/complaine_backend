@@ -1,10 +1,10 @@
+"use strict";
+
 const User = require("../../models/User");
-
 const AuditLog = require("../../models/AuditLog");
-
 const generateToken = require("../../utils/generateToken");
-const crypto = require("crypto");
 const sendEmail = require("../../utils/sendEmail");
+
 // ==========================================
 // REGISTER USER
 // ==========================================
@@ -15,135 +15,139 @@ const registerUser = async (req, res) => {
       name,
       email,
       password,
-      role,
       phone,
       hostel,
       floor,
       pocket,
       roomNumber,
       isHosteller,
-    } = req.body;
+      amizoneId,
+    } = req.body || {};
 
-    // ==========================================
-    // CHECK EXISTING USER
-    // ==========================================
-
-    const userExists = await User.findOne({
-      email,
-    });
-
-    if (userExists) {
+    if (
+      typeof name !== "string" ||
+      !name.trim() ||
+      typeof email !== "string" ||
+      !email.trim() ||
+      typeof password !== "string" ||
+      password.length < 8
+    ) {
       return res.status(400).json({
         success: false,
+        message:
+          "Valid name, email and password (at least 8 characters) required",
+      });
+    }
 
+    const normalizedEmail = email.trim().toLowerCase();
+
+    const emailDomain = normalizedEmail.split("@")[1];
+
+    if (!["s.amity.edu", "gwa.amity.edu"].includes(emailDomain)) {
+      return res.status(400).json({
+        success: false,
+        message: "Use an authorized Amity email address",
+      });
+    }
+
+    if (
+      await User.exists({
+        email: normalizedEmail,
+      })
+    ) {
+      return res.status(409).json({
+        success: false,
         message: "User already exists",
       });
     }
 
-    // ==========================================
-    // BOOLEAN CONVERSION
-    // ==========================================
-
     const hostellerValue = isHosteller === true || isHosteller === "true";
 
-    // ==========================================
-    // CREATE USER
-    // ==========================================
+    // Legacy hostel name compatibility.
+    const legacyHostelCodes = {
+      "Boys Hostel H1": "H1",
+      "Boys Hostel H4": "H4",
+      "Girls Hostel H2": "H2",
+      "Girls Hostel H3": "H3",
+      "Faculty Hostel H5": "H5",
+    };
 
-    let hostelCode = hostel;
+    const hostelCode =
+      typeof hostel === "string"
+        ? legacyHostelCodes[hostel.trim()] || hostel.trim()
+        : "";
 
-    if (hostel === "Boys Hostel H1") {
-      hostelCode = "H1";
-    }
-
-    if (hostel === "Boys Hostel H4") {
-      hostelCode = "H4";
-    }
-
-    if (hostel === "Girls Hostel H2") {
-      hostelCode = "H2";
-    }
-
-    if (hostel === "Girls Hostel H3") {
-      hostelCode = "H3";
-    }
-
-    if (hostel === "Faculty Hostel H5") {
-      hostelCode = "H5";
-    }
+    // SECURITY:
+    // Public registration always gets STUDENT.
+    // Never accept role from request body.
 
     const user = await User.create({
-      name,
-
-      email,
-
+      name: name.trim(),
+      email: normalizedEmail,
       password,
 
-      role,
+      role: "STUDENT",
 
-      phone,
+      phone: typeof phone === "string" ? phone.trim() : "",
 
-      // HOSTEL DETAILS
+      ...(typeof amizoneId === "string" && amizoneId.trim()
+        ? { amizoneId: amizoneId.trim() }
+        : {}),
 
-      hostel: hostelCode,
+      hostel: hostellerValue ? hostelCode : "",
 
-      floor,
+      floor: hostellerValue && typeof floor === "string" ? floor.trim() : "",
 
-      pocket,
+      pocket: hostellerValue && typeof pocket === "string" ? pocket.trim() : "",
 
-      roomNumber,
-
-      // HOSTELLER
+      roomNumber:
+        hostellerValue && typeof roomNumber === "string"
+          ? roomNumber.trim()
+          : "",
 
       isHosteller: hostellerValue,
-
-      // ==========================================
-      // APPROVAL SYSTEM
-      // ==========================================
-
-      permissionPending: role === "STUDENT" && hostellerValue,
-
-      isApproved: role === "STUDENT" && hostellerValue ? false : true,
+      permissionPending: hostellerValue,
+      isApproved: !hostellerValue,
+      isVerified: false,
     });
 
-    // ==========================================
-    // GENERATE TOKEN
-    // ==========================================
     const otp = user.generateEmailOTP();
-
-    console.log("OTP GENERATED:", otp);
 
     await user.save();
 
-    console.log("OTP SAVED:", user.emailOTP);
-
     const message = `
-<h2>Campus Nexus ERP</h2>
+      <h2>AmiMaintain</h2>
+      <p>Your email verification OTP:</p>
+      <h1>${otp}</h1>
+      <p>This OTP expires in 15 minutes.</p>
+    `;
 
-<p>Your Email Verification OTP:</p>
-
-<h1>${otp}</h1>
-
-<p>This OTP expires in 15 minutes.</p>
-`;
-
-    await sendEmail(user.email, "Campus Nexus Email Verification OTP", message);
-
-    // ==========================================
-    // RESPONSE
-    // ==========================================
+    await sendEmail(user.email, "AmiMaintain Email Verification OTP", message);
 
     return res.status(201).json({
       success: true,
       message: "Registration successful. Verification email sent.",
     });
   } catch (error) {
-    console.log("REGISTER ERROR:", error);
+    console.error("REGISTER ERROR:", error?.name, error?.code);
+
+    if (error?.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: "Account identifier already exists",
+      });
+    }
+
+    if (error?.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
 
     return res.status(500).json({
       success: false,
-
-      message: error.message,
+      message: "Registration failed. Please try again.",
     });
   }
 };
@@ -154,40 +158,34 @@ const registerUser = async (req, res) => {
 
 const loginUser = async (req, res) => {
   try {
-    const { email, password } = req.body;
+    const { email, password } = req.body || {};
 
-    // ==========================================
-    // CHECK USER
-    // ==========================================
-
-    const user = await User.findOne({
-      email,
-    });
-
-    if (!user) {
-      return res.status(404).json({
+    if (typeof email !== "string" || typeof password !== "string") {
+      return res.status(400).json({
         success: false,
-
-        message: "User not found",
+        message: "Email and password are required",
       });
     }
 
-    // ==========================================
-    // CHECK PASSWORD
-    // ==========================================
+    const user = await User.findOne({
+      email: email.trim().toLowerCase(),
+    });
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid email or password",
+      });
+    }
 
     const isMatch = await user.matchPassword(password);
 
     if (!isMatch) {
       return res.status(401).json({
         success: false,
-
         message: "Invalid email or password",
       });
     }
-    // ==========================================
-    // EMAIL VERIFICATION CHECK
-    // ==========================================
 
     if (!user.isVerified) {
       return res.status(403).json({
@@ -196,20 +194,12 @@ const loginUser = async (req, res) => {
       });
     }
 
-    // ==========================================
-    // ACCOUNT STATUS CHECK
-    // ==========================================
-
-    if (!user.isActive) {
+    if (!user.isActive || user.isDeleted === true) {
       return res.status(403).json({
         success: false,
         message: "Account disabled",
       });
     }
-
-    // ==========================================
-    // HOSTELLER APPROVAL CHECK
-    // ==========================================
 
     if (
       user.role === "STUDENT" &&
@@ -218,50 +208,26 @@ const loginUser = async (req, res) => {
     ) {
       return res.status(403).json({
         success: false,
-
         message: "Your hostel request is pending warden approval",
       });
     }
 
-    // ==========================================
-    // UPDATE LAST LOGIN
-    // ==========================================
-
     user.lastLogin = new Date();
-
     await user.save();
-
-    // ==========================================
-    // GENERATE TOKEN
-    // ==========================================
 
     const token = generateToken(user._id);
 
-    // ==========================================
-    // AUDIT LOG
-    // ==========================================
-
     await AuditLog.create({
       user: user.name,
-
       role: user.role,
-
       action: `${user.role} logged into ERP system`,
-
       type: "LOGIN",
-
       time: "Just Now",
     });
 
-    // ==========================================
-    // RESPONSE
-    // ==========================================
-
     return res.status(200).json({
       success: true,
-
       message: "Login successful",
-
       token,
 
       user: {
@@ -269,16 +235,14 @@ const loginUser = async (req, res) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        assignedBlock: user.assignedBlock,
+        departmentBlock: user.departmentBlock,
         phone: user.phone,
-
         hostel: user.hostel,
         floor: user.floor,
         pocket: user.pocket,
         roomNumber: user.roomNumber,
-
         assignedHostel: user.assignedHostel,
-        assignedBlock: user.assignedBlock, // FIX
-
         isApproved: user.isApproved,
         permissionPending: user.permissionPending,
         isHosteller: user.isHosteller,
@@ -286,12 +250,11 @@ const loginUser = async (req, res) => {
       },
     });
   } catch (error) {
-    console.log("LOGIN ERROR:", error);
+    console.error("LOGIN ERROR:", error);
 
     return res.status(500).json({
       success: false,
-
-      message: error.message,
+      message: "Login failed",
     });
   }
 };
@@ -302,28 +265,27 @@ const loginUser = async (req, res) => {
 
 const getMyProfile = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select("-password");
+    const user = await User.findById(req.user.id).select(
+      "name email role phone hostel floor pocket roomNumber assignedHostel assignedBlock departmentBlock isApproved permissionPending isHosteller profileEditLocked isActive isVerified createdAt updatedAt",
+    );
 
     if (!user) {
       return res.status(404).json({
         success: false,
-
         message: "User not found",
       });
     }
 
     return res.status(200).json({
       success: true,
-
       user,
     });
   } catch (error) {
-    console.log("PROFILE ERROR:", error);
+    console.error("PROFILE ERROR:", error);
 
     return res.status(500).json({
       success: false,
-
-      message: error.message,
+      message: "Unable to load profile",
     });
   }
 };
@@ -339,27 +301,18 @@ const updateProfile = async (req, res) => {
     if (!user) {
       return res.status(404).json({
         success: false,
-
         message: "User not found",
       });
     }
 
-    // ==========================================
-    // PROFILE LOCK CHECK
-    // ==========================================
-
     if (user.profileEditLocked) {
       return res.status(403).json({
         success: false,
-
         message: "Profile editing locked by Warden",
       });
     }
 
-    // ==========================================
-    // UPDATE DATA
-    // ==========================================
-
+    // Existing profile field behavior.
     user.name = req.body.name || user.name;
 
     user.phone = req.body.phone || user.phone;
@@ -372,62 +325,64 @@ const updateProfile = async (req, res) => {
 
     user.roomNumber = req.body.roomNumber || user.roomNumber;
 
-    // ==========================================
-    // HOSTELLER
-    // ==========================================
+    // Reapproval only when hostel-related
+    // information changes for hostellers.
+    const hostelFields = ["hostel", "floor", "pocket", "roomNumber"];
 
-    user.isHosteller = true;
+    const changedHostelFields = hostelFields.some(
+      (field) =>
+        Object.prototype.hasOwnProperty.call(req.body, field) &&
+        user.isModified(field),
+    );
 
-    // ==========================================
-    // RE-APPROVAL FLOW
-    // ==========================================
-
-    user.permissionPending = true;
-
-    user.isApproved = false;
-
-    // ==========================================
-    // LOCK PROFILE
-    // ==========================================
-
-    user.profileEditLocked = true;
-
-    // ==========================================
-    // SAVE
-    // ==========================================
+    if (user.role === "STUDENT" && user.isHosteller && changedHostelFields) {
+      user.permissionPending = true;
+      user.isApproved = false;
+      user.profileEditLocked = true;
+    }
 
     await user.save();
 
     return res.status(200).json({
       success: true,
-
       message: "Profile updated successfully",
 
-      user,
+      user: {
+        _id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        phone: user.phone,
+        hostel: user.hostel,
+        floor: user.floor,
+        pocket: user.pocket,
+        roomNumber: user.roomNumber,
+        isHosteller: user.isHosteller,
+        permissionPending: user.permissionPending,
+        isApproved: user.isApproved,
+        profileEditLocked: user.profileEditLocked,
+      },
     });
   } catch (error) {
-    console.log("UPDATE PROFILE ERROR:", error);
+    console.error("UPDATE PROFILE ERROR:", error);
 
     return res.status(500).json({
       success: false,
-
-      message: error.message,
+      message: "Unable to update profile",
     });
   }
 };
 
 // ==========================================
-// VERIFY EMAIL
+// VERIFY EMAIL OTP
 // ==========================================
-// ==========================================
-// VERIFY EMAIL
-// ==========================================
+
 const verifyEmailOTP = async (req, res) => {
   try {
-    const { email, otp } = req.body;
+    const { email, otp } = req.body || {};
 
     const user = await User.findOne({
-      email,
+      email: typeof email === "string" ? email.trim().toLowerCase() : "",
     });
 
     if (!user) {
@@ -440,7 +395,7 @@ const verifyEmailOTP = async (req, res) => {
     if (
       !user.emailOTP ||
       !user.emailOTPExpire ||
-      user.emailOTP !== otp ||
+      user.emailOTP !== String(otp) ||
       user.emailOTPExpire < Date.now()
     ) {
       return res.status(400).json({
@@ -450,9 +405,7 @@ const verifyEmailOTP = async (req, res) => {
     }
 
     user.isVerified = true;
-
     user.emailOTP = null;
-
     user.emailOTPExpire = null;
 
     await user.save();
@@ -462,20 +415,26 @@ const verifyEmailOTP = async (req, res) => {
       message: "Email verified successfully",
     });
   } catch (error) {
-    console.log("VERIFY OTP ERROR:", error);
+    console.error("VERIFY OTP ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Verification failed",
     });
   }
 };
 
+// ==========================================
+// RESEND EMAIL OTP
+// ==========================================
+
 const resendOTP = async (req, res) => {
   try {
-    const { email } = req.body;
+    const { email } = req.body || {};
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({
+      email: typeof email === "string" ? email.trim().toLowerCase() : "",
+    });
 
     if (!user) {
       return res.status(404).json({
@@ -489,27 +448,24 @@ const resendOTP = async (req, res) => {
     await user.save();
 
     const message = `
-    <h2>Campus Nexus ERP</h2>
-
-    <p>Your New OTP:</p>
-
-    <h1>${otp}</h1>
-
-    <p>This OTP expires in 15 minutes.</p>
+      <h2>AmiMaintain</h2>
+      <p>Your New OTP:</p>
+      <h1>${otp}</h1>
+      <p>This OTP expires in 15 minutes.</p>
     `;
 
-    await sendEmail(user.email, "Campus Nexus Email Verification OTP", message);
+    await sendEmail(user.email, "AmiMaintain Email Verification OTP", message);
 
     return res.status(200).json({
       success: true,
       message: "OTP sent successfully",
     });
   } catch (error) {
-    console.log("RESEND OTP ERROR:", error);
+    console.error("RESEND OTP ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: error.message,
+      message: "Unable to resend OTP",
     });
   }
 };
@@ -517,6 +473,7 @@ const resendOTP = async (req, res) => {
 // ==========================================
 // EXPORTS
 // ==========================================
+
 module.exports = {
   registerUser,
   loginUser,

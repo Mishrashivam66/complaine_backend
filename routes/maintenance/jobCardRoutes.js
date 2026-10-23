@@ -1,10 +1,8 @@
+"use strict";
+
 const express = require("express");
 
 const router = express.Router();
-
-// ==========================================
-// IMPORT CONTROLLERS
-// ==========================================
 
 const {
   createJobCard,
@@ -16,17 +14,12 @@ const {
   completeSelectedComplaints,
 } = require("../../controllers/maintenance/jobCardController");
 
-// ==========================================
-// IMPORT MIDDLEWARE
-// ==========================================
-
 const { protect } = require("../../middleware/authMiddleware");
 
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
 // ==========================================
 // CREATE JOB CARD
-// ONLY MAINTENANCE MANAGER
 // ==========================================
 
 router.post(
@@ -43,7 +36,7 @@ router.post(
 router.get(
   "/",
   protect,
-  roleMiddleware("MAINTENANCE_MANAGER", "WORKER"),
+  roleMiddleware("MAINTENANCE_MANAGER", "WORKER", "TECHNICIAN"),
   getAllJobCards,
 );
 
@@ -54,7 +47,7 @@ router.get(
 router.get(
   "/:id",
   protect,
-  roleMiddleware("MAINTENANCE_MANAGER", "WORKER"),
+  roleMiddleware("MAINTENANCE_MANAGER", "WORKER", "TECHNICIAN"),
   getSingleJobCard,
 );
 
@@ -65,12 +58,12 @@ router.get(
 router.put(
   "/update-status/:id",
   protect,
-  roleMiddleware("MAINTENANCE_MANAGER", "WORKER"),
+  roleMiddleware("MAINTENANCE_MANAGER", "WORKER", "TECHNICIAN"),
   updateJobStatus,
 );
 
 // ==========================================
-// DELETE JOB CARD
+// ARCHIVE / DELETE JOB CARD
 // ==========================================
 
 router.delete(
@@ -80,10 +73,26 @@ router.delete(
   deleteJobCard,
 );
 
-router.put("/:id/complete-complaints", completeSelectedComplaints);
-router.put("/:id/mark-printed", protect, markJobCardPrinted);
 // ==========================================
-// EXPORT
+// COMPLETE SELECTED COMPLAINTS
 // ==========================================
+
+router.put(
+  "/:id/complete-complaints",
+  protect,
+  roleMiddleware("MAINTENANCE_MANAGER"),
+  completeSelectedComplaints,
+);
+
+// ==========================================
+// MARK PRINTED
+// ==========================================
+
+router.put(
+  "/:id/mark-printed",
+  protect,
+  roleMiddleware("MAINTENANCE_MANAGER"),
+  markJobCardPrinted,
+);
 
 module.exports = router;

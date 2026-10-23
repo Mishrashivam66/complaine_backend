@@ -1,89 +1,111 @@
+"use strict";
+
 const express = require("express");
 
 const router = express.Router();
 
 // ==========================================
-// CONTROLLERS
+// ADMIN CONTROLLERS
 // ==========================================
 
 const { createUser } = require("../../controllers/admin/createUserController");
 
 // ==========================================
-// ROUTES IMPORT
+// ROUTES
 // ==========================================
 
 const studentRoutes = require("./studentRoutes");
-
 const userRoutes = require("./userRoutes");
-
 const locationRoutes = require("./locationRoutes");
-
 const buildingRoutes = require("./buildingRoutes");
-
+const blockRoutes = require("./blockRoutes");
 const categoryRoutes = require("./categoryRoutes");
 
 // ==========================================
-// MIDDLEWARES
+// MIDDLEWARE
 // ==========================================
 
 const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 
 // ==========================================
-// PROTECTED ROUTES
+// VALIDATE ROUTER EXPORTS
+// ==========================================
+
+const mountRouter = (path, route, filename) => {
+  if (typeof route !== "function") {
+    throw new TypeError(
+      `${filename} must export an Express Router. ` +
+        `Received: ${typeof route}. ` +
+        `Check module.exports = router;`,
+    );
+  }
+
+  router.use(path, route);
+};
+
+// ==========================================
+// AUTHENTICATE ADMIN ROUTES
 // ==========================================
 
 router.use(protect);
 
 // ==========================================
 // CATEGORY ROUTES
+// Keep existing category middleware behavior.
 // ==========================================
 
-router.use("/categories", categoryRoutes);
+mountRouter("/categories", categoryRoutes, "categoryRoutes.js");
 
 // ==========================================
 // ADMIN ONLY ACCESS
 // ==========================================
 
-router.use(authorizeRoles("ADMIN", "SUPER_ADMIN"));
+router.use(authorizeRoles("ADMIN"));
 
 // ==========================================
-// USER ROUTES
-// ==========================================
-
-router.use("/users", userRoutes);
-
-// ==========================================
-// LOCATION ROUTES
-// ==========================================
-
-router.use("/locations", locationRoutes);
-
-// ==========================================
-// BUILDING ROUTES
-// ==========================================
-
-router.use("/buildings", buildingRoutes);
-
-// ==========================================
-// CREATE USER
+// CREATE USERS
 // ==========================================
 
 router.post("/create-user", createUser);
 
 // ==========================================
-// STUDENT ROUTES
+// USER MANAGEMENT
 // ==========================================
 
-router.use("/students", studentRoutes);
+mountRouter("/users", userRoutes, "userRoutes.js");
 
 // ==========================================
-// TEST ROUTE
+// LOCATION MANAGEMENT
+// ==========================================
+
+mountRouter("/locations", locationRoutes, "locationRoutes.js");
+
+// ==========================================
+// BUILDING MANAGEMENT
+// ==========================================
+
+mountRouter("/buildings", buildingRoutes, "buildingRoutes.js");
+
+// ==========================================
+// ACADEMIC BLOCK MANAGEMENT
+// ==========================================
+
+mountRouter("/blocks", blockRoutes, "blockRoutes.js");
+
+// ==========================================
+// STUDENT MANAGEMENT
+// ==========================================
+
+mountRouter("/students", studentRoutes, "studentRoutes.js");
+
+// ==========================================
+// TEST
 // ==========================================
 
 router.get("/", (req, res) => {
-  res.json({
+  return res.status(200).json({
     success: true,
-    message: "Admin Route Working",
+    message: "AmiMaintain Admin API Working",
   });
 });
 

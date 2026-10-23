@@ -1,5 +1,6 @@
-const jwt = require("jsonwebtoken");
+"use strict";
 
+const jwt = require("jsonwebtoken");
 const User = require("../models/User");
 
 // ==========================================
@@ -10,69 +11,47 @@ const protect = async (req, res, next) => {
   try {
     let token;
 
-    // ======================================
-    // CHECK TOKEN
-    // ======================================
+    const authorization = req.headers.authorization;
 
-    if (
-      req.headers.authorization &&
-      req.headers.authorization.startsWith("Bearer")
-    ) {
-      token = req.headers.authorization.split(" ")[1];
+    if (authorization && authorization.startsWith("Bearer ")) {
+      token = authorization.split(" ")[1];
     }
-
-    // ======================================
-    // NO TOKEN
-    // ======================================
 
     if (!token) {
       return res.status(401).json({
         success: false,
-
         message: "Not Authorized",
       });
     }
 
-    // ======================================
-    // VERIFY TOKEN
-    // ======================================
-
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // ======================================
-    // FIND USER
-    // ======================================
-
-    const user = await User.findById(decoded.id).select("-password");
+    const user = await User.findById(decoded.id).select(
+      "-password -emailOTP -verificationToken -resetPasswordToken",
+    );
 
     if (!user) {
       return res.status(401).json({
         success: false,
-
         message: "User not found",
       });
     }
 
-    if (!user.isActive) {
+    if (user.isActive === false || user.isDeleted === true) {
       return res.status(403).json({
         success: false,
-        message: "Your account has been deactivated",
+        message: "Account disabled",
       });
     }
 
-    // ======================================
-    // SAVE USER
-    // ======================================
-
     req.user = user;
 
-    next();
+    return next();
   } catch (error) {
-    console.log(error);
+    console.error("AUTH MIDDLEWARE:", error.name);
 
     return res.status(401).json({
       success: false,
-
       message: "Invalid Token",
     });
   }
@@ -84,30 +63,31 @@ const protect = async (req, res, next) => {
 
 const authorizeRoles = (...roles) => {
   return (req, res, next) => {
-    const userRole = req.user.role?.toString().trim().toLowerCase();
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Authentication required",
+      });
+    }
 
-    const allowedRoles = roles.map((role) =>
-      role.toString().trim().toLowerCase(),
-    );
+    const userRole = String(req.user.role || "")
+      .trim()
+      .toUpperCase();
+
+    const allowedRoles = roles.map((role) => String(role).trim().toUpperCase());
 
     if (!allowedRoles.includes(userRole)) {
       return res.status(403).json({
         success: false,
-
         message: "Access Denied",
       });
     }
 
-    next();
+    return next();
   };
 };
 
-// ==========================================
-// EXPORTS
-// ==========================================
-
 module.exports = {
   protect,
-
   authorizeRoles,
 };

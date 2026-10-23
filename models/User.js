@@ -1,3 +1,5 @@
+"use strict";
+
 const mongoose = require("mongoose");
 const bcrypt = require("bcryptjs");
 const crypto = require("crypto");
@@ -8,9 +10,9 @@ const crypto = require("crypto");
 
 const userSchema = new mongoose.Schema(
   {
-    // ==========================================
+    // ======================================
     // BASIC INFORMATION
-    // ==========================================
+    // ======================================
 
     name: {
       type: String,
@@ -26,32 +28,25 @@ const userSchema = new mongoose.Schema(
       },
 
       unique: true,
-
       sparse: true,
-
       lowercase: true,
-
       trim: true,
 
       validate: {
         validator: function (email) {
-          // Student ke liye Amity mail mandatory
-
-          if (this.role === "STUDENT") {
-            const allowedDomains = ["s.amity.edu", "gwa.amity.edu"];
-
-            if (!email || !email.includes("@")) {
-              return false;
-            }
-
-            const domain = email.split("@")[1];
-
-            return allowedDomains.includes(domain);
+          if (this.role !== "STUDENT") {
+            return true;
           }
 
-          // Worker / Admin / Manager
+          const allowedDomains = ["s.amity.edu", "gwa.amity.edu"];
 
-          return true;
+          if (!email || !email.includes("@")) {
+            return false;
+          }
+
+          const domain = email.split("@")[1];
+
+          return allowedDomains.includes(domain);
         },
 
         message:
@@ -81,12 +76,13 @@ const userSchema = new mongoose.Schema(
       default: "",
     },
 
-    // ==========================================
+    // ======================================
     // ROLE MANAGEMENT
-    // ==========================================
+    // ======================================
 
     role: {
       type: String,
+
       enum: [
         "ADMIN",
         "BLOCK_ADMIN",
@@ -94,34 +90,43 @@ const userSchema = new mongoose.Schema(
         "WARDEN",
         "MAINTENANCE_MANAGER",
         "STORE_MANAGER",
-        "HOUSEKEEPING_HEAD",
-        "IT_HEAD",
+
+        "TECHNICIAN",
         "WORKER",
+
         "STUDENT",
         "FACULTY",
         "ADMIN_STAFF",
+
+        // Legacy accounts
+        "HOUSEKEEPING_HEAD",
+        "IT_HEAD",
         "MESS_MANAGER",
       ],
+
       default: "STUDENT",
     },
-    // ==========================================
+
+    // ======================================
     // DEPARTMENT
-    // ==========================================
+    // ======================================
 
     department: {
       type: String,
       default: "",
     },
 
-    // ==========================================
-    // STUDENT DEPARTMENT BLOCK
-    // ==========================================
-
+    // No fixed A-F enum.
     departmentBlock: {
       type: String,
-      enum: ["", "A", "B", "C", "D", "E", "F"],
+      trim: true,
+      uppercase: true,
       default: "",
     },
+
+    // ======================================
+    // TECHNICIAN / WORKER STATUS
+    // ======================================
 
     shift: {
       type: String,
@@ -134,15 +139,22 @@ const userSchema = new mongoose.Schema(
       enum: ["ACTIVE", "BUSY", "OFFLINE", "ON_LEAVE"],
       default: "ACTIVE",
     },
+
     currentJobs: {
       type: Number,
       default: 0,
+      min: 0,
     },
 
     maxJobs: {
       type: Number,
       default: 10,
+      min: 0,
     },
+
+    // ======================================
+    // STUDENT STATUS
+    // ======================================
 
     studentStatus: {
       type: String,
@@ -158,6 +170,10 @@ const userSchema = new mongoose.Schema(
       },
     },
 
+    // ======================================
+    // HOSTEL INFORMATION
+    // ======================================
+
     floor: {
       type: String,
     },
@@ -165,10 +181,6 @@ const userSchema = new mongoose.Schema(
     pocket: {
       type: String,
     },
-
-    // ==========================================
-    // STUDENT INFORMATION
-    // ==========================================
 
     isHosteller: {
       type: Boolean,
@@ -200,9 +212,9 @@ const userSchema = new mongoose.Schema(
       default: "",
     },
 
-    // ==========================================
-    // WARDEN / STAFF ASSIGNMENT
-    // ==========================================
+    // ======================================
+    // WARDEN / STAFF ASSIGNMENTS
+    // ======================================
 
     assignedHostel: {
       type: String,
@@ -211,16 +223,16 @@ const userSchema = new mongoose.Schema(
 
     assignedBlock: {
       type: String,
-      enum: ["", "A", "B", "C", "D", "E", "F"],
+      uppercase: true,
+      trim: true,
       default: "",
+
       validate: {
         validator: function (value) {
-          if (this.role === "BLOCK_ADMIN") {
-            return ["A", "B", "C", "D", "E", "F"].includes(value);
-          }
-          return true;
+          return this.role !== "BLOCK_ADMIN" || Boolean(value && value.trim());
         },
-        message: "Block Admin must be assigned a valid block",
+
+        message: "Block Admin requires an assigned block",
       },
     },
 
@@ -231,6 +243,7 @@ const userSchema = new mongoose.Schema(
 
     employeeId: {
       type: String,
+      trim: true,
       default: "",
     },
 
@@ -240,19 +253,15 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ==========================================
+    // ======================================
     // APPROVAL FLOW
-    // ==========================================
+    // ======================================
 
     isApproved: {
       type: Boolean,
 
       default: function () {
-        if (this.isHosteller) {
-          return false;
-        }
-
-        return true;
+        return !this.isHosteller;
       },
     },
 
@@ -272,13 +281,30 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ==========================================
+    // ======================================
     // ACCOUNT STATUS
-    // ==========================================
+    // ======================================
 
     isActive: {
       type: Boolean,
       default: true,
+    },
+
+    // Soft archive.
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
+
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+
+    deletedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
     },
 
     lastLogin: {
@@ -286,9 +312,9 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ==========================================
+    // ======================================
     // EMAIL VERIFICATION
-    // ==========================================
+    // ======================================
 
     isVerified: {
       type: Boolean,
@@ -305,18 +331,18 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ==========================================
+    // ======================================
     // PROFILE SETTINGS
-    // ==========================================
+    // ======================================
 
     profileEditLocked: {
       type: Boolean,
       default: false,
     },
 
-    // ==========================================
+    // ======================================
     // ACADEMIC INFORMATION
-    // ==========================================
+    // ======================================
 
     course: {
       type: String,
@@ -348,9 +374,9 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
 
-    // ==========================================
+    // ======================================
     // PASSWORD RESET
-    // ==========================================
+    // ======================================
 
     resetPasswordToken: {
       type: String,
@@ -387,11 +413,15 @@ userSchema.pre("save", async function () {
 // ==========================================
 
 userSchema.methods.matchPassword = async function (enteredPassword) {
-  return await bcrypt.compare(enteredPassword, this.password);
+  return bcrypt.compare(enteredPassword, this.password);
 };
 
+// ==========================================
+// GENERATE EMAIL OTP
+// ==========================================
+
 userSchema.methods.generateEmailOTP = function () {
-  const otp = Math.floor(100000 + Math.random() * 900000).toString();
+  const otp = crypto.randomInt(100000, 1000000).toString();
 
   this.emailOTP = otp;
 
