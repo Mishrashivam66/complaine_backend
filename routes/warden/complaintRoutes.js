@@ -1,98 +1,63 @@
+"use strict";
+
 const express = require("express");
-
 const router = express.Router();
-
-// ==========================================
-// CONTROLLER IMPORTS
-// ==========================================
 
 const {
   createComplaint,
-
   getHostelComplaints,
-
   getSingleComplaint,
-
   updateComplaintStatus,
-
   assignWorker,
-
   escalateComplaint,
-
   deleteComplaint,
 } = require("../../controllers/warden/complaintController");
 
-// ==========================================
-// MIDDLEWARE IMPORTS
-// ==========================================
-
 const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 
-// ==========================================
-// CREATE COMPLAINT
-// STUDENT
-// ==========================================
-
-router.post("/create", protect, authorizeRoles("student"), createComplaint);
+const requireStudentComplaintAccess = require("../../middleware/requireStudentComplaintAccess");
 
 // ==========================================
-// GET ALL HOSTEL COMPLAINTS
-// WARDEN
+// LEGACY STUDENT COMPLAINT CREATE
 // ==========================================
 
-router.get("/", protect, authorizeRoles("warden"), getHostelComplaints);
+router.post(
+  "/create",
+  protect,
+  authorizeRoles("STUDENT"),
+  requireStudentComplaintAccess,
+  createComplaint,
+);
 
 // ==========================================
-// GET SINGLE COMPLAINT
+// WARDEN COMPLAINTS
 // ==========================================
+
+router.get("/", protect, authorizeRoles("WARDEN"), getHostelComplaints);
 
 router.get("/:id", protect, getSingleComplaint);
-
-// ==========================================
-// UPDATE STATUS
-// WARDEN
-// ==========================================
 
 router.put(
   "/:id/status",
   protect,
-  authorizeRoles("warden"),
+  authorizeRoles("WARDEN"),
   updateComplaintStatus,
 );
 
-// ==========================================
-// ASSIGN WORKER
-// WARDEN
-// ==========================================
-
-router.put("/:id/assign", protect, authorizeRoles("warden"), assignWorker);
-
-// ==========================================
-// ESCALATE COMPLAINT
-// WARDEN
-// ==========================================
+router.put("/:id/assign", protect, authorizeRoles("WARDEN"), assignWorker);
 
 router.put(
   "/:id/escalate",
   protect,
-  authorizeRoles("warden"),
+  authorizeRoles("WARDEN"),
   escalateComplaint,
 );
-
-// ==========================================
-// DELETE COMPLAINT
-// ADMIN / WARDEN
-// ==========================================
 
 router.delete(
   "/:id",
   protect,
-  authorizeRoles("admin", "warden"),
+  authorizeRoles("ADMIN", "WARDEN"),
   deleteComplaint,
 );
-
-// ==========================================
-// EXPORT
-// ==========================================
 
 module.exports = router;

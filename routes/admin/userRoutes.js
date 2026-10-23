@@ -1,54 +1,49 @@
+"use strict";
+
 const express = require("express");
 
 const router = express.Router();
 
-// ==========================================
-// CONTROLLERS
-// ==========================================
+const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 
 const {
   getAllUsers,
-
-  deleteUser,
-
+  updateUser,
   toggleUserStatus,
+  deleteUser,
 } = require("../../controllers/admin/userController");
 
 // ==========================================
-// MIDDLEWARES
-// ==========================================
-
-const {
-  protect,
-
-  authorizeRoles,
-} = require("../../middleware/authMiddleware");
-
-// ==========================================
-// ADMIN ACCESS
+// ADMIN AUTHENTICATION
 // ==========================================
 
 router.use(protect);
 
-router.use(authorizeRoles("ADMIN", "SUPER_ADMIN"));
+router.use(authorizeRoles("ADMIN"));
 
 // ==========================================
-// GET USERS
+// GET ALL STAFF ACCOUNTS
 // ==========================================
 
 router.get("/", getAllUsers);
 
 // ==========================================
-// DELETE USER
-// ==========================================
-
-router.delete("/:id", deleteUser);
-
-// ==========================================
-// TOGGLE STATUS
+// ACTIVATE / DEACTIVATE
 // ==========================================
 
 router.put("/status/:id", toggleUserStatus);
+
+// ==========================================
+// EDIT ACCOUNT
+// ==========================================
+
+router.put("/:id", updateUser);
+
+// ==========================================
+// ARCHIVE ACCOUNT
+// ==========================================
+
+router.delete("/:id", deleteUser);
 
 // ==========================================
 // EXPORT

@@ -7,7 +7,7 @@ const dotenv = require("dotenv");
 // ==========================================
 
 const connectDB = require("./config/db");
-
+const complaintAccessRoutes = require("./routes/complaintAccessRoutes");
 // ==========================================
 // ENV CONFIG
 // ==========================================
@@ -210,7 +210,7 @@ app.get("/", (req, res) => {
 // ==========================================
 // ERROR HANDLER
 // ==========================================
-
+app.use("/api/complaint-access", complaintAccessRoutes);
 app.use((err, req, res, next) => {
   console.error(err.stack);
 

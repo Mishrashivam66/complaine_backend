@@ -1,32 +1,25 @@
+"use strict";
+
 const express = require("express");
-
 const router = express.Router();
-
-// ==========================================
-// CONTROLLERS
-// ==========================================
 
 const {
   createComplaint,
-
   getAllComplaints,
-
   getMyComplaints,
-
   getComplaintById,
-
   updateComplaintStatus,
-
   assignComplaint,
-
   reopenComplaint,
 } = require("../../controllers/student/complaintController");
 
+const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
+
 // ==========================================
-// MIDDLEWARE
+// COMPLAINT BLOCKING MIDDLEWARE
 // ==========================================
 
-const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
+const requireStudentComplaintAccess = require("../../middleware/requireStudentComplaintAccess");
 
 // ==========================================
 // CREATE COMPLAINT
@@ -34,9 +27,9 @@ const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 
 router.post(
   "/create",
-
   protect,
-
+  authorizeRoles("STUDENT"),
+  requireStudentComplaintAccess,
   createComplaint,
 );
 
@@ -44,37 +37,22 @@ router.post(
 // GET MY COMPLAINTS
 // ==========================================
 
-router.get(
-  "/my-complaints",
-
-  protect,
-
-  getMyComplaints,
-);
+router.get("/my-complaints", protect, getMyComplaints);
 
 // ==========================================
-// GET SINGLE COMPLAINT
+// GET SINGLE
 // ==========================================
 
-router.get(
-  "/:id",
-
-  protect,
-
-  getComplaintById,
-);
+router.get("/:id", protect, getComplaintById);
 
 // ==========================================
-// GET ALL COMPLAINTS
+// GET ALL
 // ==========================================
 
 router.get(
   "/",
-
   protect,
-
   authorizeRoles("ADMIN", "WARDEN", "MAINTENANCE_MANAGER"),
-
   getAllComplaints,
 );
 
@@ -84,11 +62,8 @@ router.get(
 
 router.put(
   "/update-status/:id",
-
   protect,
-
   authorizeRoles("ADMIN", "WORKER", "WARDEN"),
-
   updateComplaintStatus,
 );
 
@@ -98,11 +73,8 @@ router.put(
 
 router.put(
   "/assign/:id",
-
   protect,
-
   authorizeRoles("ADMIN", "MAINTENANCE_MANAGER"),
-
   assignComplaint,
 );
 
@@ -110,32 +82,17 @@ router.put(
 // REOPEN COMPLAINT
 // ==========================================
 
-router.put(
-  "/reopen/:id",
-
-  protect,
-
-  reopenComplaint,
-);
+router.put("/reopen/:id", protect, reopenComplaint);
 
 // ==========================================
-// TEST ROUTE
+// TEST
 // ==========================================
 
-router.get(
-  "/test/api",
-
-  (req, res) => {
-    res.json({
-      success: true,
-
-      message: "Complaint Routes Working",
-    });
-  },
-);
-
-// ==========================================
-// EXPORT ROUTER
-// ==========================================
+router.get("/test/api", (req, res) => {
+  res.json({
+    success: true,
+    message: "Complaint Routes Working",
+  });
+});
 
 module.exports = router;
