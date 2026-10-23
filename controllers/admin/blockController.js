@@ -147,3 +147,79 @@ exports.updateBlock = async (req, res) => {
     });
   }
 };
+
+const archiveBlock = async (req, res) => {
+  try {
+    const block = await Block.findById(req.params.id);
+
+    if (!block || block.isDeleted) {
+      return res.status(404).json({
+        success: false,
+        message: "Block not found",
+      });
+    }
+
+    // Active Block Admin is using this block.
+    const assignedAdmin = await User.exists({
+      role: "BLOCK_ADMIN",
+      assignedBlock: block.code,
+      isActive: true,
+      isDeleted: { $ne: true },
+    });
+
+    if (assignedAdmin) {
+      return res.status(409).json({
+        success: false,
+        message:
+          "This block is assigned to an active Block Admin. Reassign the user first.",
+      });
+    }
+
+    block.isActive = false;
+    block.isDeleted = true;
+
+    await block.save();
+
+    return res.json({
+      success: true,
+      message: "Block removed from active campus setup",
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Unable to remove block",
+    });
+  }
+};
+
+const restoreBlock = async (req, res) => {
+  try {
+    const block = await Block.findById(req.params.id);
+
+    if (!block) {
+      return res.status(404).json({
+        success: false,
+        message: "Block not found",
+      });
+    }
+
+    block.isDeleted = false;
+    block.isActive = true;
+
+    await block.save();
+
+    return res.json({
+      success: true,
+      message: "Block restored successfully",
+      block,
+    });
+  } catch (error) {
+    return res.status(500).json({
+      success: false,
+      message: "Unable to restore block",
+    });
+  }
+};
+
+exports.archiveBlock = archiveBlock;
+exports.restoreBlock = restoreBlock;
