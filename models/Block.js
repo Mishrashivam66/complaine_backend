@@ -2,9 +2,17 @@
 
 const mongoose = require("mongoose");
 
-// ==========================================
-// DYNAMIC ACADEMIC BLOCK MODEL
-// ==========================================
+const FLOORS = [
+  "Ground",
+  "First",
+  "Second",
+  "Third",
+  "Fourth",
+  "Fifth",
+  "Sixth",
+  "Seventh",
+  "Eighth",
+];
 
 const blockSchema = new mongoose.Schema(
   {
@@ -14,21 +22,55 @@ const blockSchema = new mongoose.Schema(
       unique: true,
       trim: true,
       uppercase: true,
-      maxlength: 12,
-      match: /^[A-Z0-9][A-Z0-9_-]*$/,
+      match: /^[A-Z0-9][A-Z0-9_-]{0,11}$/,
     },
 
     name: {
       type: String,
       required: true,
       trim: true,
+      maxlength: 120,
+    },
+
+    buildingType: {
+      type: String,
+      trim: true,
+      default: "",
       maxlength: 100,
     },
+
+    startFloor: {
+      type: String,
+      enum: FLOORS,
+      default: "Ground",
+    },
+
+    endFloor: {
+      type: String,
+      enum: FLOORS,
+      default: "Fourth",
+    },
+
+    roomRange: {
+      type: String,
+      trim: true,
+      default: "",
+      maxlength: 100,
+    },
+
+    departments: [
+      {
+        type: String,
+        trim: true,
+        maxlength: 120,
+      },
+    ],
 
     description: {
       type: String,
       trim: true,
       default: "",
+      maxlength: 1000,
     },
 
     isActive: {
