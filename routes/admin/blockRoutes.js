@@ -1,6 +1,7 @@
 "use strict";
 
 const express = require("express");
+
 const router = express.Router();
 
 const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
@@ -13,17 +14,45 @@ const {
   restoreBlock,
 } = require("../../controllers/admin/blockController");
 
+// ==========================================
+// ADMIN ACCESS ONLY
+// ==========================================
+
 router.use(protect);
 router.use(authorizeRoles("ADMIN"));
 
+// ==========================================
+// GET BLOCKS
+// ==========================================
+
 router.get("/", getBlocks);
+
+// ==========================================
+// CREATE BLOCK
+// ==========================================
+
 router.post("/", createBlock);
+
+// ==========================================
+// UPDATE BLOCK
+// ==========================================
+
 router.put("/:id", updateBlock);
 
-// Remove block safely
+// ==========================================
+// ARCHIVE BLOCK
+// ==========================================
+
 router.delete("/:id", archiveBlock);
 
-// Restore archived block
+// ==========================================
+// RESTORE BLOCK
+// ==========================================
+
 router.patch("/:id/restore", restoreBlock);
+
+// ==========================================
+// EXPORT ROUTER
+// ==========================================
 
 module.exports = router;
