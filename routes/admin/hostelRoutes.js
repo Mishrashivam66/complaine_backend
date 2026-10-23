@@ -1,44 +1,19 @@
-const express = require("express");
+"use strict";
 
+const express = require("express");
 const router = express.Router();
 
-// ==========================================
-// CONTROLLERS
-// ==========================================
+const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 
 const {
   createHostel,
-
   getAllHostels,
-
   updateHostel,
-
   deleteHostel,
+  restoreHostel,
 } = require("../../controllers/admin/hostelController");
 
-// ==========================================
-// MIDDLEWARE
-// ==========================================
-
-const {
-  protect,
-
-  authorizeRoles,
-} = require("../../middleware/authMiddleware");
-
-// ==========================================
-// ADMIN ONLY ACCESS
-// ==========================================
-
-router.use(protect);
-
-router.use(authorizeRoles("ADMIN", "SUPER_ADMIN"));
-
-// ==========================================
-// CREATE HOSTEL
-// ==========================================
-
-router.post("/create", createHostel);
+router.use(protect, authorizeRoles("ADMIN"));
 
 // ==========================================
 // GET ALL HOSTELS
@@ -47,19 +22,27 @@ router.post("/create", createHostel);
 router.get("/all", getAllHostels);
 
 // ==========================================
+// CREATE HOSTEL
+// ==========================================
+
+router.post("/create", createHostel);
+
+// ==========================================
 // UPDATE HOSTEL
 // ==========================================
 
 router.put("/update/:id", updateHostel);
 
 // ==========================================
-// DELETE HOSTEL
+// ARCHIVE HOSTEL (LEGACY DELETE URL)
 // ==========================================
 
 router.delete("/delete/:id", deleteHostel);
 
 // ==========================================
-// EXPORT
+// RESTORE HOSTEL
 // ==========================================
+
+router.patch("/restore/:id", restoreHostel);
 
 module.exports = router;
