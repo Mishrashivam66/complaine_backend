@@ -3,6 +3,11 @@
 const mongoose = require("mongoose");
 const Block = require("../../models/Block");
 const User = require("../../models/User");
+const Complaint = require("../../models/Complaint");
+
+// ==========================================
+// CONFIGURATION
+// ==========================================
 
 const FLOORS = [
   "Ground",
@@ -16,44 +21,75 @@ const FLOORS = [
   "Eighth",
 ];
 
-const handleError = (res, error) => {
-  if (error?.code === 11000) {
-    return res.status(409).json({
-      success: false,
-      message: "Academic Block code already exists",
-    });
-  }
+const CODE_PATTERN = /^[A-Z0-9][A-Z0-9_-]{0,11}$/;
 
-  if (["ValidationError", "CastError"].includes(error?.name)) {
-    return res.status(400).json({
-      success: false,
-      message: "Invalid Academic Block data",
-    });
-  }
+const VALID_FIELDS = ["buildingType", "roomRange", "description"];
 
-  console.error("ACADEMIC BLOCK:", error);
+const escapeRegex = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-  return res.status(500).json({
-    success: false,
-    message: "Academic Block operation failed",
-  });
-};
+const exact = (value) => new RegExp(`^\\s*${escapeRegex(value)}\\s*$`, "i");
 
-const validateFields = (body, creating = false) => {
+// ==========================================
+// BLOCK REFERENCES
+// ==========================================
+
+function aliases(block) {
+  const code = String(block.code || "").trim();
+
+  return [
+    ...new Set(
+      [
+        code,
+        `Block ${code}`,
+        `Academic Block ${code}`,
+        String(block.name || "").trim(),
+      ].filter(Boolean),
+    ),
+  ].map(exact);
+}
+
+// ==========================================
+// INPUT ERROR
+// ==========================================
+
+function badInput(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
+
+// ==========================================
+// VALIDATE INPUT
+// ==========================================
+
+function validateFields(body = {}, creating = false) {
   const result = {};
 
   if (creating || body.name !== undefined) {
-    if (typeof body.name !== "string" || !body.name.trim()) {
-      throw new Error("Block name is required");
+    if (
+      typeof body.name !== "string" ||
+      !body.name.trim() ||
+      body.name.trim().length > 120
+    ) {
+      throw badInput("Block name is required (maximum 120 characters)");
     }
 
     result.name = body.name.trim();
   }
 
-  for (const key of ["buildingType", "roomRange", "description"]) {
+  for (const key of VALID_FIELDS) {
     if (body[key] !== undefined) {
-      if (typeof body[key] !== "string") {
-        throw new Error(`${key} must be text`);
+      const limits = {
+        buildingType: 100,
+        roomRange: 100,
+        description: 1000,
+      };
+
+      if (typeof body[key] !== "string" || body[key].length > limits[key]) {
+        throw badInput(
+          `${key} must be text (maximum ${limits[key]} characters)`,
+        );
       }
 
       result[key] = body[key].trim();
@@ -63,7 +99,7 @@ const validateFields = (body, creating = false) => {
   for (const key of ["startFloor", "endFloor"]) {
     if (body[key] !== undefined) {
       if (!FLOORS.includes(body[key])) {
-        throw new Error("Invalid floor selection");
+        throw badInput("Invalid floor selection");
       }
 
       result[key] = body[key];
@@ -71,29 +107,29 @@ const validateFields = (body, creating = false) => {
   }
 
   if (body.departments !== undefined) {
-    if (!Array.isArray(body.departments)) {
-      throw new Error("Departments must be a list");
-    }
-
-    if (body.departments.some((item) => typeof item !== "string")) {
-      throw new Error("Invalid department name");
+    if (
+      !Array.isArray(body.departments) ||
+      body.departments.some((name) => typeof name !== "string")
+    ) {
+      throw badInput("Departments must be a list of names");
     }
 
     const departments = body.departments
-      .map((item) => item.trim())
+      .map((name) => name.trim())
       .filter(Boolean);
 
     if (
       departments.length > 100 ||
       departments.some((name) => name.length > 120)
     ) {
-      throw new Error("Invalid department list");
+      throw badInput("Invalid department list");
     }
 
-    const names = departments.map((name) => name.toLowerCase());
-
-    if (new Set(names).size !== names.length) {
-      throw new Error("Duplicate department name");
+    if (
+      new Set(departments.map((name) => name.toLowerCase())).size !==
+      departments.length
+    ) {
+      throw badInput("Duplicate department name");
     }
 
     result.departments = departments;
@@ -101,31 +137,24 @@ const validateFields = (body, creating = false) => {
 
   if (body.isActive !== undefined) {
     if (typeof body.isActive !== "boolean") {
-      throw new Error("Invalid active status");
+      throw badInput("Invalid active status");
     }
 
     result.isActive = body.isActive;
   }
 
   return result;
-};
+}
 
-const hasAssignedAdmin = async (code) => {
-  return Boolean(
-    await User.exists({
-      role: "BLOCK_ADMIN",
-      assignedBlock: code,
-      isActive: true,
-      isDeleted: { $ne: true },
-    }),
-  );
-};
+// ==========================================
+// FIND BLOCK
+// ==========================================
 
-const findBlock = async (req, res) => {
+async function getBlock(req, res) {
   if (!mongoose.isValidObjectId(req.params.id)) {
     res.status(400).json({
       success: false,
-      message: "Invalid block ID",
+      message: "Invalid Academic Block ID",
     });
 
     return null;
@@ -143,7 +172,273 @@ const findBlock = async (req, res) => {
   }
 
   return block;
-};
+}
+
+// ==========================================
+// ERROR HANDLER
+// ==========================================
+
+function onError(res, error) {
+  if (error.code === 11000) {
+    return res.status(409).json({
+      success: false,
+      message: "Academic Block code already exists",
+    });
+  }
+
+  if (error.statusCode) {
+    return res.status(error.statusCode).json({
+      success: false,
+      message: error.message,
+    });
+  }
+
+  if (["ValidationError", "CastError"].includes(error.name)) {
+    return res.status(400).json({
+      success: false,
+      message: "Invalid Academic Block data",
+    });
+  }
+
+  console.error("ACADEMIC BLOCK ERROR:", error);
+
+  return res.status(500).json({
+    success: false,
+    message: "Academic Block operation failed",
+  });
+}
+
+// ==========================================
+// CHECK ALL KNOWN DEPENDENCIES
+// ==========================================
+
+async function dependencyReport(block, { checkExtra = false } = {}) {
+  const refs = aliases(block);
+
+  const [activeAdmins, allUsers, currentUsers, allComplaints, openComplaints] =
+    await Promise.all([
+      User.find({
+        role: "BLOCK_ADMIN",
+
+        assignedBlock: {
+          $in: refs,
+        },
+
+        isActive: {
+          $ne: false,
+        },
+
+        isDeleted: {
+          $ne: true,
+        },
+      })
+        .select("_id name email assignedBlock")
+        .lean(),
+
+      User.countDocuments({
+        $or: [
+          {
+            assignedBlock: {
+              $in: refs,
+            },
+          },
+          {
+            departmentBlock: {
+              $in: refs,
+            },
+          },
+          {
+            block: {
+              $in: refs,
+            },
+          },
+        ],
+      }),
+
+      User.countDocuments({
+        isActive: {
+          $ne: false,
+        },
+
+        isDeleted: {
+          $ne: true,
+        },
+
+        $or: [
+          {
+            departmentBlock: {
+              $in: refs,
+            },
+          },
+          {
+            block: {
+              $in: refs,
+            },
+          },
+        ],
+      }),
+
+      Complaint.countDocuments({
+        $or: [
+          {
+            block: {
+              $in: refs,
+            },
+          },
+          {
+            issueLocation: {
+              $in: refs,
+            },
+          },
+        ],
+      }),
+
+      Complaint.countDocuments({
+        $or: [
+          {
+            block: {
+              $in: refs,
+            },
+          },
+          {
+            issueLocation: {
+              $in: refs,
+            },
+          },
+        ],
+
+        status: {
+          $nin: ["COMPLETED", "RESOLVED", "CLOSED"],
+        },
+      }),
+    ]);
+
+  const report = {
+    blockCode: block.code,
+
+    activeBlockAdmins: activeAdmins,
+
+    activeBlockAdminCount: activeAdmins.length,
+
+    linkedUserCount: allUsers,
+
+    currentUserCount: currentUsers,
+
+    complaintCount: allComplaints,
+
+    openComplaintCount: openComplaints,
+
+    otherReferences: [],
+  };
+
+  if (!checkExtra) {
+    return report;
+  }
+
+  // Scan direct references in known
+  // legacy maintenance collections.
+
+  const candidates = new Set([
+    "locations",
+    "buildings",
+    "rooms",
+    "jobcards",
+    "maintenancetasks",
+    "maintenancehistories",
+    "workorders",
+    "materialrequests",
+    "issueditems",
+  ]);
+
+  const database = mongoose.connection.db;
+
+  if (!database) {
+    throw new Error("Database connection is unavailable");
+  }
+
+  const collections = await database
+    .listCollections({}, { nameOnly: true })
+    .toArray();
+
+  for (const { name } of collections) {
+    if (!candidates.has(name.toLowerCase())) {
+      continue;
+    }
+
+    const fields = [
+      "block",
+      "blockCode",
+      "blockName",
+      "academicBlock",
+      "departmentBlock",
+      "assignedBlock",
+      "locationCode",
+      "buildingName",
+      "issueLocation",
+    ];
+
+    const found = await database.collection(name).findOne(
+      {
+        $or: [
+          ...fields.map((field) => ({
+            [field]: {
+              $in: refs,
+            },
+          })),
+
+          {
+            blockId: block._id,
+          },
+
+          {
+            blockRef: block._id,
+          },
+
+          {
+            buildingId: block._id,
+          },
+        ],
+      },
+      {
+        projection: {
+          _id: 1,
+        },
+      },
+    );
+
+    if (found) {
+      report.otherReferences.push(name);
+    }
+  }
+
+  return report;
+}
+
+// ==========================================
+// BLOCKING REASON
+// ==========================================
+
+function blockingMessage(report) {
+  if (report.activeBlockAdminCount) {
+    return (
+      "An active Block Admin is assigned. " +
+      "Reassign or deactivate that account first."
+    );
+  }
+
+  if (report.currentUserCount) {
+    return "Active users are mapped to this block. " + "Reassign them first.";
+  }
+
+  if (report.openComplaintCount) {
+    return (
+      "Open complaints reference this block. " +
+      "Finish or transfer them first."
+    );
+  }
+
+  return null;
+}
 
 // ==========================================
 // GET BLOCKS
@@ -151,23 +446,77 @@ const findBlock = async (req, res) => {
 
 exports.getBlocks = async (req, res) => {
   try {
-    const includeArchived = req.query.includeArchived === "true";
+    const filter =
+      req.query.includeArchived === "true"
+        ? {}
+        : {
+            isActive: {
+              $ne: false,
+            },
 
-    const query = includeArchived
-      ? {}
-      : {
-          isActive: true,
-          isDeleted: { $ne: true },
-        };
+            isDeleted: {
+              $ne: true,
+            },
+          };
 
-    const blocks = await Block.find(query).sort({ code: 1 }).lean();
+    const [blocks, total, active, archived] = await Promise.all([
+      Block.find(filter).sort({ code: 1 }).lean(),
+
+      Block.countDocuments({
+        isDeleted: {
+          $ne: true,
+        },
+      }),
+
+      Block.countDocuments({
+        isDeleted: {
+          $ne: true,
+        },
+        isActive: {
+          $ne: false,
+        },
+      }),
+
+      Block.countDocuments({
+        isDeleted: true,
+      }),
+    ]);
 
     return res.json({
       success: true,
       blocks,
+
+      analytics: {
+        total,
+        active,
+        archived,
+      },
     });
   } catch (error) {
-    return handleError(res, error);
+    return onError(res, error);
+  }
+};
+
+// ==========================================
+// GET BLOCK DEPENDENCIES
+// ==========================================
+
+exports.getBlockDependencies = async (req, res) => {
+  try {
+    const block = await getBlock(req, res);
+
+    if (!block) return;
+
+    const dependencies = await dependencyReport(block, {
+      checkExtra: true,
+    });
+
+    return res.json({
+      success: true,
+      dependencies,
+    });
+  } catch (error) {
+    return onError(res, error);
   }
 };
 
@@ -181,29 +530,23 @@ exports.createBlock = async (req, res) => {
       .trim()
       .toUpperCase();
 
-    if (!/^[A-Z0-9][A-Z0-9_-]{0,11}$/.test(code)) {
-      return res.status(400).json({
-        success: false,
-        message: "Enter a valid unique Block Code",
-      });
+    if (!CODE_PATTERN.test(code)) {
+      throw badInput("Enter a valid unique Block Code");
     }
 
-    const payload = validateFields(req.body || {}, true);
+    const fields = validateFields(req.body, true);
 
-    const start = FLOORS.indexOf(payload.startFloor || "Ground");
+    const start = FLOORS.indexOf(fields.startFloor || "Ground");
 
-    const end = FLOORS.indexOf(payload.endFloor || "Fourth");
+    const end = FLOORS.indexOf(fields.endFloor || "Fourth");
 
     if (start > end) {
-      return res.status(400).json({
-        success: false,
-        message: "End floor must not be before start floor",
-      });
+      throw badInput("End floor must not be before start floor");
     }
 
     const block = await Block.create({
       code,
-      ...payload,
+      ...fields,
       isActive: true,
       isDeleted: false,
     });
@@ -214,18 +557,7 @@ exports.createBlock = async (req, res) => {
       block,
     });
   } catch (error) {
-    if (
-      error.message &&
-      !["ValidationError", "CastError"].includes(error.name) &&
-      error.code !== 11000
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    return handleError(res, error);
+    return onError(res, error);
   }
 };
 
@@ -235,7 +567,7 @@ exports.createBlock = async (req, res) => {
 
 exports.updateBlock = async (req, res) => {
   try {
-    const block = await findBlock(req, res);
+    const block = await getBlock(req, res);
 
     if (!block) return;
 
@@ -250,34 +582,34 @@ exports.updateBlock = async (req, res) => {
       req.body?.code !== undefined &&
       String(req.body.code).trim().toUpperCase() !== block.code
     ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Block Code is permanent. Archive and create a new block if necessary.",
-      });
+      throw badInput("Block Code cannot change after creation");
     }
 
-    const changes = validateFields(req.body || {});
+    const fields = validateFields(req.body);
 
-    const start = FLOORS.indexOf(changes.startFloor || block.startFloor);
+    const start = FLOORS.indexOf(fields.startFloor || block.startFloor);
 
-    const end = FLOORS.indexOf(changes.endFloor || block.endFloor);
+    const end = FLOORS.indexOf(fields.endFloor || block.endFloor);
 
     if (start > end) {
-      return res.status(400).json({
-        success: false,
-        message: "End floor must not be before start floor",
-      });
+      throw badInput("End floor must not be before start floor");
     }
 
-    if (changes.isActive === false && (await hasAssignedAdmin(block.code))) {
-      return res.status(409).json({
-        success: false,
-        message: "Reassign active Block Admin before deactivating",
-      });
+    if (fields.isActive === false && block.isActive !== false) {
+      const dependencies = await dependencyReport(block);
+
+      const reason = blockingMessage(dependencies);
+
+      if (reason) {
+        return res.status(409).json({
+          success: false,
+          message: reason,
+          dependencies,
+        });
+      }
     }
 
-    Object.assign(block, changes);
+    Object.assign(block, fields);
 
     await block.save();
 
@@ -287,17 +619,7 @@ exports.updateBlock = async (req, res) => {
       block,
     });
   } catch (error) {
-    if (
-      error.message &&
-      !["ValidationError", "CastError"].includes(error.name)
-    ) {
-      return res.status(400).json({
-        success: false,
-        message: error.message,
-      });
-    }
-
-    return handleError(res, error);
+    return onError(res, error);
   }
 };
 
@@ -307,14 +629,26 @@ exports.updateBlock = async (req, res) => {
 
 exports.archiveBlock = async (req, res) => {
   try {
-    const block = await findBlock(req, res);
+    const block = await getBlock(req, res);
 
     if (!block) return;
 
-    if (await hasAssignedAdmin(block.code)) {
+    if (block.isDeleted) {
       return res.status(409).json({
         success: false,
-        message: "Reassign active Block Admin before archiving",
+        message: "Block is already archived",
+      });
+    }
+
+    const dependencies = await dependencyReport(block);
+
+    const reason = blockingMessage(dependencies);
+
+    if (reason) {
+      return res.status(409).json({
+        success: false,
+        message: reason,
+        dependencies,
       });
     }
 
@@ -325,10 +659,11 @@ exports.archiveBlock = async (req, res) => {
 
     return res.json({
       success: true,
-      message: "Block archived; complaint history preserved",
+      message: "Academic Block archived; history preserved",
+      block,
     });
   } catch (error) {
-    return handleError(res, error);
+    return onError(res, error);
   }
 };
 
@@ -338,9 +673,17 @@ exports.archiveBlock = async (req, res) => {
 
 exports.restoreBlock = async (req, res) => {
   try {
-    const block = await findBlock(req, res);
+    const block = await getBlock(req, res);
 
     if (!block) return;
+
+    if (!block.isDeleted) {
+      return res.json({
+        success: true,
+        message: "Block is already active",
+        block,
+      });
+    }
 
     block.isDeleted = false;
     block.isActive = true;
@@ -353,6 +696,63 @@ exports.restoreBlock = async (req, res) => {
       block,
     });
   } catch (error) {
-    return handleError(res, error);
+    return onError(res, error);
+  }
+};
+
+// ==========================================
+// PERMANENT DELETE BLOCK
+// ==========================================
+
+exports.permanentDeleteBlock = async (req, res) => {
+  try {
+    const block = await getBlock(req, res);
+
+    if (!block) return;
+
+    if (!block.isDeleted) {
+      return res.status(409).json({
+        success: false,
+        message: "Archive the block before permanent deletion",
+      });
+    }
+
+    const dependencies = await dependencyReport(block, {
+      checkExtra: true,
+    });
+
+    if (
+      dependencies.linkedUserCount ||
+      dependencies.complaintCount ||
+      dependencies.otherReferences.length
+    ) {
+      return res.status(409).json({
+        success: false,
+
+        message:
+          "Block is referenced by existing records. Keep it archived or migrate references first.",
+
+        dependencies,
+      });
+    }
+
+    const result = await Block.deleteOne({
+      _id: block._id,
+      isDeleted: true,
+    });
+
+    if (!result.deletedCount) {
+      return res.status(409).json({
+        success: false,
+        message: "Block has changed; refresh first",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Unreferenced Academic Block permanently deleted",
+    });
+  } catch (error) {
+    return onError(res, error);
   }
 };

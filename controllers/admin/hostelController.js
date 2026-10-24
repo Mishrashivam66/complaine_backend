@@ -10,28 +10,32 @@ const TYPES = new Set(["BOYS", "GIRLS", "CO-ED", "STAFF"]);
 
 const CODE_PATTERN = /^[A-Z0-9][A-Z0-9_-]{0,11}$/;
 
+const normalize = (value) =>
+  String(value || "")
+    .trim()
+    .toUpperCase();
+
 // ==========================================
-// LEGACY HOSTEL CODE COMPATIBILITY
+// LEGACY HOSTEL CODE
 // ==========================================
 
-const legacyCode = (name) => {
-  const match = String(name || "").match(/\b(H\d+[A-Z]?)\b/i);
-
-  return match ? match[1].toUpperCase() : "";
-};
+const legacyCode = (name) =>
+  String(name || "")
+    .match(/\b(H\d+[A-Z]?)\b/i)?.[1]
+    ?.toUpperCase() || "";
 
 const codeOf = (hostel) =>
-  String(hostel.hostelCode || "")
-    .trim()
-    .toUpperCase() || legacyCode(hostel.hostelName);
+  normalize(hostel.hostelCode) || legacyCode(hostel.hostelName);
 
 const present = (hostel) => ({
   ...hostel,
   hostelCode: codeOf(hostel),
 });
 
+const regexEscape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
 // ==========================================
-// ALL RECOGNIZED HOSTEL REFERENCES
+// HOSTEL ALIASES
 // ==========================================
 
 const aliasesFor = (hostel) => {
@@ -42,121 +46,236 @@ const aliasesFor = (hostel) => {
       [
         hostel.hostelName,
         code,
-        `Hostel ${code}`,
-        `Boys Hostel ${code}`,
-        `Girls Hostel ${code}`,
-        `Faculty Hostel ${code}`,
-      ].filter(Boolean),
+        code ? `Hostel ${code}` : "",
+        code ? `Boys Hostel ${code}` : "",
+        code ? `Girls Hostel ${code}` : "",
+        code ? `Faculty Hostel ${code}` : "",
+      ]
+        .filter(Boolean)
+        .map((item) => String(item).trim()),
     ),
   ];
 };
 
+const aliasesAsRegex = (hostel) =>
+  aliasesFor(hostel).map(
+    (value) => new RegExp(`^\\s*${regexEscape(value)}\\s*$`, "i"),
+  );
+
 // ==========================================
-// CHECK EXISTING ASSIGNMENTS
+// CHECK HOSTEL DEPENDENCIES
 // ==========================================
 
-async function dependencyMessage(hostel) {
-  const aliases = aliasesFor(hostel);
+const dependencyCheck = async (hostel, { permanent = false } = {}) => {
+  const aliasRegex = aliasesAsRegex(hostel);
 
-  const warden = await User.exists({
+  const personRefs = {
+    $or: [
+      {
+        assignedHostel: {
+          $in: aliasRegex,
+        },
+      },
+      {
+        hostel: {
+          $in: aliasRegex,
+        },
+      },
+    ],
+  };
+
+  const activeWarden = await User.exists({
     role: "WARDEN",
-    assignedHostel: {
-      $in: aliases,
-    },
     isActive: true,
-    isDeleted: {
-      $ne: true,
+    isDeleted: { $ne: true },
+    assignedHostel: {
+      $in: aliasRegex,
     },
   });
 
-  if (warden) {
-    return "Reassign the active Warden before disabling this hostel";
-  }
-
-  const student = await User.exists({
+  const currentHosteller = await User.exists({
     role: "STUDENT",
     isHosteller: true,
-    hostel: {
-      $in: aliases,
-    },
-    isDeleted: {
-      $ne: true,
-    },
+
     studentStatus: {
       $ne: "LEFT_HOSTEL",
     },
+
+    isDeleted: {
+      $ne: true,
+    },
+
+    hostel: {
+      $in: aliasRegex,
+    },
   });
 
-  if (student) {
-    return "Move current hostel residents before disabling this hostel";
-  }
-
-  const complaint = await Complaint.exists({
+  const openComplaint = await Complaint.exists({
     complaintArea: "HOSTEL",
+
     hostel: {
-      $in: aliases,
+      $in: aliasRegex,
     },
+
     status: {
       $nin: ["COMPLETED", "RESOLVED", "CLOSED"],
     },
   });
 
-  if (complaint) {
-    return "Resolve or reassign open hostel complaints first";
+  if (activeWarden) {
+    return "Reassign the active Warden " + "before archiving this hostel";
+  }
+
+  if (currentHosteller) {
+    return "Move current hostel residents " + "before archiving this hostel";
+  }
+
+  if (openComplaint) {
+    return "Resolve or reassign open hostel " + "complaints first";
+  }
+
+  if (!permanent) {
+    return null;
+  }
+
+  // ======================================
+  // HISTORICAL ACCOUNT REFERENCES
+  // ======================================
+
+  if (await User.exists(personRefs)) {
+    return "Hostel has staff/student account history; " + "keep it archived";
+  }
+
+  // ======================================
+  // HISTORICAL COMPLAINT REFERENCES
+  // ======================================
+
+  if (
+    await Complaint.exists({
+      hostel: {
+        $in: aliasRegex,
+      },
+    })
+  ) {
+    return "Hostel has complaint history; " + "keep it archived";
+  }
+
+  // ======================================
+  // LEGACY COLLECTION REFERENCES
+  // ======================================
+
+  const collectionNames = [
+    "rooms",
+    "roomallocations",
+    "locations",
+    "jobcards",
+    "maintenancetasks",
+    "maintenancehistories",
+  ];
+
+  for (const name of collectionNames) {
+    const collection = mongoose.connection.db?.collection(name);
+
+    if (!collection) continue;
+
+    const linked = await collection.findOne(
+      {
+        $or: [
+          {
+            hostel: {
+              $in: aliasRegex,
+            },
+          },
+          {
+            hostel: hostel._id,
+          },
+          {
+            hostelName: {
+              $in: aliasRegex,
+            },
+          },
+          {
+            hostelCode: {
+              $in: aliasRegex,
+            },
+          },
+          {
+            hostelId: hostel._id,
+          },
+          {
+            hostelRef: hostel._id,
+          },
+          {
+            locationCode: {
+              $in: aliasRegex,
+            },
+          },
+        ],
+      },
+      {
+        projection: {
+          _id: 1,
+        },
+      },
+    );
+
+    if (linked) {
+      return `Hostel has legacy ${name} records; ` + "keep it archived";
+    }
   }
 
   return null;
-}
+};
 
 // ==========================================
-// VALIDATE INPUT FIELDS
+// VALIDATE INPUT
 // ==========================================
 
-function inputFields(body, { creating = false } = {}) {
-  const output = {};
+const parseInput = (body, { creating = false } = {}) => {
+  const data = {};
 
   if (creating || body.hostelName !== undefined) {
-    if (typeof body.hostelName !== "string" || !body.hostelName.trim()) {
-      throw new Error("Hostel name is required");
+    if (
+      typeof body.hostelName !== "string" ||
+      !body.hostelName.trim() ||
+      body.hostelName.trim().length > 120
+    ) {
+      throw new Error(
+        "Valid hostel name is required " + "(max 120 characters)",
+      );
     }
 
-    output.hostelName = body.hostelName.trim();
-
-    if (output.hostelName.length > 120) {
-      throw new Error("Hostel name is too long");
-    }
+    data.hostelName = body.hostelName.trim();
   }
 
   if (creating || body.hostelCode !== undefined) {
-    const code = String(body.hostelCode || "")
-      .trim()
-      .toUpperCase();
+    const code = normalize(body.hostelCode);
 
     if (!CODE_PATTERN.test(code)) {
       throw new Error("Valid Hostel Code is required (e.g. H1)");
     }
 
-    output.hostelCode = code;
+    data.hostelCode = code;
   }
 
   if (body.hostelType !== undefined) {
-    const type = String(body.hostelType).toUpperCase();
+    const type = normalize(body.hostelType);
 
     if (!TYPES.has(type)) {
       throw new Error("Invalid hostel type");
     }
 
-    output.hostelType = type;
+    data.hostelType = type;
   }
 
   if (body.totalFloors !== undefined) {
-    const floors = Number(body.totalFloors);
+    const n = Number(body.totalFloors);
 
-    if (!Number.isInteger(floors) || floors < 0 || floors > 100) {
-      throw new Error("Total floors must be from 0 to 100");
+    if (!Number.isInteger(n) || n < 0 || n > 100) {
+      throw new Error("Total floors must be 0–100");
     }
 
-    output.totalFloors = floors;
+    data.totalFloors = n;
   }
 
   if (body.description !== undefined) {
@@ -164,10 +283,10 @@ function inputFields(body, { creating = false } = {}) {
       typeof body.description !== "string" ||
       body.description.length > 1000
     ) {
-      throw new Error("Description must be at most 1000 characters");
+      throw new Error("Description is too long");
     }
 
-    output.description = body.description.trim();
+    data.description = body.description.trim();
   }
 
   if (body.isActive !== undefined) {
@@ -175,17 +294,17 @@ function inputFields(body, { creating = false } = {}) {
       throw new Error("Invalid status");
     }
 
-    output.isActive = body.isActive;
+    data.isActive = body.isActive;
   }
 
-  return output;
-}
+  return data;
+};
 
 // ==========================================
-// CHECK DUPLICATE HOSTEL CODE OR NAME
+// CHECK DUPLICATE CODE / NAME
 // ==========================================
 
-async function hasDuplicate(code, name, excludedId = null) {
+const hasDuplicate = async (code, name, excludedId) => {
   const rows = await Hostel.find(
     excludedId
       ? {
@@ -201,15 +320,15 @@ async function hasDuplicate(code, name, excludedId = null) {
   return rows.some(
     (hostel) =>
       codeOf(hostel) === code ||
-      hostel.hostelName.toLowerCase() === name.toLowerCase(),
+      normalize(hostel.hostelName) === normalize(name),
   );
-}
+};
 
 // ==========================================
 // GET HOSTEL BY ID
 // ==========================================
 
-async function getHostelOrRespond(req, res) {
+const getById = async (req, res) => {
   if (!mongoose.isValidObjectId(req.params.id)) {
     res.status(400).json({
       success: false,
@@ -226,97 +345,98 @@ async function getHostelOrRespond(req, res) {
       success: false,
       message: "Hostel not found",
     });
-
-    return null;
   }
 
   return hostel;
-}
+};
 
 // ==========================================
 // ERROR HANDLER
 // ==========================================
 
-function handleError(res, error) {
-  if (error.code === 11000) {
+const fail = (res, error) => {
+  if (error?.code === 11000) {
     return res.status(409).json({
       success: false,
       message: "Hostel name/code already exists",
     });
   }
 
-  if (error.name === "ValidationError" || error.name === "CastError") {
+  if (
+    error?.name === "ValidationError" ||
+    error?.name === "CastError" ||
+    error?.isInputError
+  ) {
     return res.status(400).json({
       success: false,
-      message: "Invalid hostel details",
+      message: error?.isInputError ? error.message : "Invalid hostel details",
     });
   }
 
-  if (error.isInputError) {
-    return res.status(400).json({
-      success: false,
-      message: error.message,
-    });
-  }
-
-  console.error("HOSTEL MANAGEMENT ERROR:", error);
+  console.error("HOSTEL ERROR:", error);
 
   return res.status(500).json({
     success: false,
     message: "Hostel operation failed",
   });
-}
+};
 
-function parseInput(body, opts) {
+const readInput = (body, options) => {
   try {
-    return inputFields(body, opts);
+    return parseInput(body || {}, options);
   } catch (error) {
     error.isInputError = true;
     throw error;
   }
-}
+};
 
 // ==========================================
 // GET ALL HOSTELS
 // ==========================================
 
-exports.getAllHostels = async (req, res) => {
+const getAllHostels = async (req, res) => {
   try {
     const includeArchived = req.query.includeArchived === "true";
 
-    const query = includeArchived
+    const filter = includeArchived
       ? {}
       : {
-          isDeleted: {
-            $ne: true,
-          },
-          isActive: {
-            $ne: false,
-          },
+          isDeleted: { $ne: true },
+          isActive: { $ne: false },
         };
 
-    const records = await Hostel.find(query)
-      .sort({
-        hostelName: 1,
-      })
-      .lean();
+    const [rows, totalHostels, activeHostels, archivedHostels] =
+      await Promise.all([
+        Hostel.find(filter).sort({ hostelName: 1 }).lean(),
 
-    const hostels = records.map(present);
+        Hostel.countDocuments({
+          isDeleted: { $ne: true },
+        }),
+
+        Hostel.countDocuments({
+          isDeleted: { $ne: true },
+          isActive: { $ne: false },
+        }),
+
+        Hostel.countDocuments({
+          isDeleted: true,
+        }),
+      ]);
 
     return res.json({
       success: true,
-      hostels,
+
+      hostels: rows.map(present),
 
       analytics: {
-        totalHostels: hostels.filter((h) => h.isDeleted !== true).length,
-
-        activeHostels: hostels.filter(
-          (h) => h.isActive !== false && h.isDeleted !== true,
-        ).length,
+        totalHostels,
+        activeHostels,
+        archivedHostels,
+        inactiveHostels: totalHostels - activeHostels,
       },
     });
   } catch (error) {
-    return handleError(res, error);
+    return fail(res, error);
   }
 };
 
@@ -324,21 +444,21 @@ exports.getAllHostels = async (req, res) => {
 // CREATE HOSTEL
 // ==========================================
 
-exports.createHostel = async (req, res) => {
+const createHostel = async (req, res) => {
   try {
-    const fields = parseInput(req.body || {}, {
+    const data = readInput(req.body, {
       creating: true,
     });
 
-    if (await hasDuplicate(fields.hostelCode, fields.hostelName)) {
+    if (await hasDuplicate(data.hostelCode, data.hostelName)) {
       return res.status(409).json({
         success: false,
-        message: "Hostel code or name already exists",
+        message: "Hostel name or code already exists",
       });
     }
 
     const hostel = await Hostel.create({
-      ...fields,
+      ...data,
       isActive: true,
       isDeleted: false,
     });
@@ -349,7 +469,7 @@ exports.createHostel = async (req, res) => {
       message: "Hostel created",
     });
   } catch (error) {
-    return handleError(res, error);
+    return fail(res, error);
   }
 };
 
@@ -357,9 +477,9 @@ exports.createHostel = async (req, res) => {
 // UPDATE HOSTEL
 // ==========================================
 
-exports.updateHostel = async (req, res) => {
+const updateHostel = async (req, res) => {
   try {
-    const hostel = await getHostelOrRespond(req, res);
+    const hostel = await getById(req, res);
 
     if (!hostel) return;
 
@@ -370,21 +490,20 @@ exports.updateHostel = async (req, res) => {
       });
     }
 
-    const fields = parseInput(req.body || {});
+    const data = readInput(req.body);
+    const code = codeOf(hostel);
 
-    const currentCode = codeOf(hostel);
-
-    if (fields.hostelCode && currentCode && fields.hostelCode !== currentCode) {
+    if (data.hostelCode && code && data.hostelCode !== code) {
       return res.status(409).json({
         success: false,
-        message: "Hostel Code cannot be changed after creation",
+        message: "Hostel Code cannot change after creation",
       });
     }
 
     if (
       await hasDuplicate(
-        fields.hostelCode || currentCode,
-        fields.hostelName || hostel.hostelName,
+        data.hostelCode || code,
+        data.hostelName || hostel.hostelName,
         hostel._id,
       )
     ) {
@@ -394,8 +513,26 @@ exports.updateHostel = async (req, res) => {
       });
     }
 
-    if (fields.isActive === false && hostel.isActive !== false) {
-      const reason = await dependencyMessage(hostel);
+    if (
+      data.hostelName &&
+      normalize(data.hostelName) !== normalize(hostel.hostelName)
+    ) {
+      const historicalReason = await dependencyCheck(hostel, {
+        permanent: true,
+      });
+
+      if (historicalReason) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "Hostel has linked records. Keep " +
+            "its current name or migrate references first",
+        });
+      }
+    }
+
+    if (data.isActive === false && hostel.isActive !== false) {
+      const reason = await dependencyCheck(hostel);
 
       if (reason) {
         return res.status(409).json({
@@ -405,7 +542,7 @@ exports.updateHostel = async (req, res) => {
       }
     }
 
-    Object.assign(hostel, fields);
+    Object.assign(hostel, data);
 
     await hostel.save();
 
@@ -415,7 +552,7 @@ exports.updateHostel = async (req, res) => {
       message: "Hostel updated",
     });
   } catch (error) {
-    return handleError(res, error);
+    return fail(res, error);
   }
 };
 
@@ -423,9 +560,9 @@ exports.updateHostel = async (req, res) => {
 // ARCHIVE HOSTEL
 // ==========================================
 
-exports.deleteHostel = async (req, res) => {
+const deleteHostel = async (req, res) => {
   try {
-    const hostel = await getHostelOrRespond(req, res);
+    const hostel = await getById(req, res);
 
     if (!hostel) return;
 
@@ -436,7 +573,7 @@ exports.deleteHostel = async (req, res) => {
       });
     }
 
-    const reason = await dependencyMessage(hostel);
+    const reason = await dependencyCheck(hostel);
 
     if (reason) {
       return res.status(409).json({
@@ -455,7 +592,49 @@ exports.deleteHostel = async (req, res) => {
       message: "Hostel archived; history preserved",
     });
   } catch (error) {
-    return handleError(res, error);
+    return fail(res, error);
+  }
+};
+
+// ==========================================
+// PERMANENT DELETE HOSTEL
+// ==========================================
+
+const permanentDeleteHostel = async (req, res) => {
+  try {
+    const hostel = await getById(req, res);
+
+    if (!hostel) return;
+
+    if (!hostel.isDeleted) {
+      return res.status(409).json({
+        success: false,
+        message: "Archive the hostel before permanent deletion",
+      });
+    }
+
+    const reason = await dependencyCheck(hostel, {
+      permanent: true,
+    });
+
+    if (reason) {
+      return res.status(409).json({
+        success: false,
+        message: reason,
+      });
+    }
+
+    await Hostel.deleteOne({
+      _id: hostel._id,
+      isDeleted: true,
+    });
+
+    return res.json({
+      success: true,
+      message: "Unreferenced hostel permanently deleted",
+    });
+  } catch (error) {
+    return fail(res, error);
   }
 };
 
@@ -463,9 +642,9 @@ exports.deleteHostel = async (req, res) => {
 // RESTORE HOSTEL
 // ==========================================
 
-exports.restoreHostel = async (req, res) => {
+const restoreHostel = async (req, res) => {
   try {
-    const hostel = await getHostelOrRespond(req, res);
+    const hostel = await getById(req, res);
 
     if (!hostel) return;
 
@@ -480,6 +659,19 @@ exports.restoreHostel = async (req, res) => {
       message: "Hostel restored",
     });
   } catch (error) {
-    return handleError(res, error);
+    return fail(res, error);
   }
+};
+
+// ==========================================
+// EXPORTS
+// ==========================================
+
+module.exports = {
+  createHostel,
+  getAllHostels,
+  updateHostel,
+  deleteHostel,
+  restoreHostel,
+  permanentDeleteHostel,
 };

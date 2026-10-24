@@ -11,7 +11,12 @@ const {
   updateHostel,
   deleteHostel,
   restoreHostel,
+  permanentDeleteHostel,
 } = require("../../controllers/admin/hostelController");
+
+// ==========================================
+// ADMIN AUTHORIZATION
+// ==========================================
 
 router.use(protect, authorizeRoles("ADMIN"));
 
@@ -34,7 +39,7 @@ router.post("/create", createHostel);
 router.put("/update/:id", updateHostel);
 
 // ==========================================
-// ARCHIVE HOSTEL (LEGACY DELETE URL)
+// ARCHIVE HOSTEL
 // ==========================================
 
 router.delete("/delete/:id", deleteHostel);
@@ -44,5 +49,11 @@ router.delete("/delete/:id", deleteHostel);
 // ==========================================
 
 router.patch("/restore/:id", restoreHostel);
+
+// ==========================================
+// PERMANENT DELETE
+// ==========================================
+
+router.delete("/permanent/:id", permanentDeleteHostel);
 
 module.exports = router;

@@ -3,23 +3,12 @@
 const express = require("express");
 const router = express.Router();
 
-const {
-  createComplaint,
-  getAllComplaints,
-  getComplaintById,
-  getMyComplaints,
-  reopenComplaint,
-  closeComplaint,
-  assignComplaint,
-  resolveComplaint,
-  escalateComplaint,
-  getComplaintStats,
-} = require("../../controllers/admin/complaintController");
-
 const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 
+const controller = require("../../controllers/admin/complaintController");
+
 // ==========================================
-// TEST
+// ROUTE HEALTH CHECK
 // ==========================================
 
 router.get("/test", (req, res) => {
@@ -30,38 +19,82 @@ router.get("/test", (req, res) => {
 });
 
 // ==========================================
-// CREATE - ADMIN ONLY
+// AUTHENTICATION
 // ==========================================
 
-// Student must use /api/student/complaints/create.
-// This prevents bypass through Admin's create API.
-
-router.post("/create", protect, authorizeRoles("ADMIN"), createComplaint);
+router.use(protect);
 
 // ==========================================
-// GET
+// CREATE COMPLAINT
 // ==========================================
 
-router.get("/all", protect, getAllComplaints);
-
-router.get("/my", protect, getMyComplaints);
-
-router.get("/stats", protect, getComplaintStats);
-
-router.get("/:id", protect, getComplaintById);
+router.post("/create", authorizeRoles("ADMIN"), controller.createComplaint);
 
 // ==========================================
-// UPDATE
+// GET COMPLAINTS
 // ==========================================
 
-router.patch("/assign/:id", protect, assignComplaint);
+router.get(
+  "/all",
+  authorizeRoles("ADMIN", "MAINTENANCE_MANAGER"),
+  controller.getAllComplaints,
+);
 
-router.patch("/resolve/:id", protect, resolveComplaint);
+router.get("/my", controller.getMyComplaints);
 
-router.patch("/escalate/:id", protect, escalateComplaint);
+router.get(
+  "/stats",
+  authorizeRoles("ADMIN", "MAINTENANCE_MANAGER"),
+  controller.getComplaintStats,
+);
 
-router.patch("/reopen/:id", protect, reopenComplaint);
+router.get("/:id", controller.getComplaintById);
 
-router.patch("/close/:id", protect, closeComplaint);
+// ==========================================
+// TECHNICIAN ASSIGNMENT
+// ==========================================
+
+router.patch(
+  "/assign/:id",
+  authorizeRoles("MAINTENANCE_MANAGER"),
+  controller.assignComplaint,
+);
+
+// ==========================================
+// MANAGER VERIFICATION
+// ==========================================
+
+router.patch(
+  "/resolve/:id",
+  authorizeRoles("MAINTENANCE_MANAGER"),
+  controller.resolveComplaint,
+);
+
+// ==========================================
+// ESCALATION
+// ==========================================
+
+router.patch(
+  "/escalate/:id",
+  authorizeRoles("MAINTENANCE_MANAGER"),
+  controller.escalateComplaint,
+);
+
+// ==========================================
+// CLOSE COMPLAINT
+// ==========================================
+
+router.patch(
+  "/close/:id",
+  authorizeRoles("MAINTENANCE_MANAGER"),
+  controller.closeComplaint,
+);
+
+// ==========================================
+// NOT SATISFIED FEEDBACK
+// LEGACY URL PRESERVED
+// ==========================================
+
+router.patch("/reopen/:id", controller.reopenComplaint);
 
 module.exports = router;
