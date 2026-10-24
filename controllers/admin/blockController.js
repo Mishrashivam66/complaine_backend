@@ -337,10 +337,8 @@ async function dependencyReport(block, { checkExtra = false } = {}) {
 
   // Scan direct references in known
   // legacy maintenance collections.
-
   const candidates = new Set([
     "locations",
-    "buildings",
     "rooms",
     "jobcards",
     "maintenancetasks",
@@ -349,7 +347,6 @@ async function dependencyReport(block, { checkExtra = false } = {}) {
     "materialrequests",
     "issueditems",
   ]);
-
   const database = mongoose.connection.db;
 
   if (!database) {
