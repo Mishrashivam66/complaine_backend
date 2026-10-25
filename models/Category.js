@@ -1,107 +1,72 @@
-const mongoose = require("mongoose");
+"use strict";
 
-// ==========================================
-// CATEGORY SCHEMA
-// ==========================================
+const mongoose = require("mongoose");
 
 const categorySchema = new mongoose.Schema(
   {
-    // ==========================================
-    // CATEGORY NAME
-    // ==========================================
-
     categoryName: {
       type: String,
-
       required: true,
-
-      trim: true,
-
       unique: true,
+      trim: true,
+      maxlength: 120,
     },
 
-    // ==========================================
-    // DEPARTMENT
-    // ==========================================
-
+    // Legacy values retained for old records.
+    // New categories will be maintenance-only.
     department: {
       type: String,
-
       enum: ["MAINTENANCE", "HOSTEL", "SECURITY", "MESS", "IT", "ADMIN"],
-
       default: "MAINTENANCE",
     },
 
-    // ==========================================
-    // PRIORITY
-    // ==========================================
-
     priority: {
       type: String,
-
       enum: ["LOW", "MEDIUM", "HIGH"],
-
       default: "MEDIUM",
     },
 
-    // ==========================================
-    // ICON
-    // ==========================================
-
     icon: {
       type: String,
-
+      trim: true,
       default: "Wrench",
+      maxlength: 60,
     },
-
-    // ==========================================
-    // DESCRIPTION
-    // ==========================================
 
     description: {
       type: String,
-
+      trim: true,
       default: "",
+      maxlength: 1000,
     },
-
-    // ==========================================
-    // SUB CATEGORIES
-    // ==========================================
 
     subCategories: [
       {
         type: String,
+        trim: true,
+        maxlength: 120,
       },
     ],
 
-    // ==========================================
-    // STATUS
-    // ==========================================
-
     isActive: {
       type: Boolean,
-
       default: true,
     },
 
-    // ==========================================
-    // TOTAL COMPLAINTS
-    // ==========================================
+    isDeleted: {
+      type: Boolean,
+      default: false,
+    },
 
+    // Kept for compatibility.
+    // API calculates live counts from Complaint.
     totalComplaints: {
       type: Number,
-
       default: 0,
+      min: 0,
     },
   },
-
-  {
-    timestamps: true,
-  },
+  { timestamps: true },
 );
-
-// ==========================================
-// EXPORT
-// ==========================================
 
 module.exports = mongoose.model("Category", categorySchema);

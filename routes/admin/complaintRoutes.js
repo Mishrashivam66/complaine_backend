@@ -2,99 +2,54 @@
 
 const express = require("express");
 const router = express.Router();
-
 const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
-
-const controller = require("../../controllers/admin/complaintController");
-
-// ==========================================
-// ROUTE HEALTH CHECK
-// ==========================================
+const complaint = require("../../controllers/admin/complaintController");
+const report = require("../../controllers/admin/complaintReportController");
 
 router.get("/test", (req, res) => {
-  res.json({
-    success: true,
-    message: "Complaint route working",
-  });
+  res.json({ success: true, message: "Complaint route working" });
 });
-
-// ==========================================
-// AUTHENTICATION
-// ==========================================
 
 router.use(protect);
 
-// ==========================================
-// CREATE COMPLAINT
-// ==========================================
+// Report must come before the dynamic "/:id" route.
+router.get("/report", authorizeRoles("ADMIN"), report.downloadComplaintReport);
 
-router.post("/create", authorizeRoles("ADMIN"), controller.createComplaint);
-
-// ==========================================
-// GET COMPLAINTS
-// ==========================================
-
+// Preserve existing URLs and Maintenance Manager responsibilities.
+router.post("/create", authorizeRoles("ADMIN"), complaint.createComplaint);
 router.get(
   "/all",
   authorizeRoles("ADMIN", "MAINTENANCE_MANAGER"),
-  controller.getAllComplaints,
+  complaint.getAllComplaints,
 );
-
-router.get("/my", controller.getMyComplaints);
-
+router.get("/my", complaint.getMyComplaints);
 router.get(
   "/stats",
   authorizeRoles("ADMIN", "MAINTENANCE_MANAGER"),
-  controller.getComplaintStats,
+  complaint.getComplaintStats,
 );
-
-router.get("/:id", controller.getComplaintById);
-
-// ==========================================
-// TECHNICIAN ASSIGNMENT
-// ==========================================
+router.get("/:id", complaint.getComplaintById);
 
 router.patch(
   "/assign/:id",
   authorizeRoles("MAINTENANCE_MANAGER"),
-  controller.assignComplaint,
+  complaint.assignComplaint,
 );
-
-// ==========================================
-// MANAGER VERIFICATION
-// ==========================================
-
 router.patch(
   "/resolve/:id",
   authorizeRoles("MAINTENANCE_MANAGER"),
-  controller.resolveComplaint,
+  complaint.resolveComplaint,
 );
-
-// ==========================================
-// ESCALATION
-// ==========================================
-
 router.patch(
   "/escalate/:id",
   authorizeRoles("MAINTENANCE_MANAGER"),
-  controller.escalateComplaint,
+  complaint.escalateComplaint,
 );
-
-// ==========================================
-// CLOSE COMPLAINT
-// ==========================================
-
 router.patch(
   "/close/:id",
   authorizeRoles("MAINTENANCE_MANAGER"),
-  controller.closeComplaint,
+  complaint.closeComplaint,
 );
-
-// ==========================================
-// NOT SATISFIED FEEDBACK
-// LEGACY URL PRESERVED
-// ==========================================
-
-router.patch("/reopen/:id", controller.reopenComplaint);
+router.patch("/reopen/:id", complaint.reopenComplaint);
 
 module.exports = router;

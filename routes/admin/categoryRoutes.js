@@ -1,93 +1,51 @@
-const express = require("express");
+"use strict";
 
+const express = require("express");
 const router = express.Router();
 
-// ==========================================
-// CONTROLLERS
-// ==========================================
+const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 
 const {
   createCategory,
-
   getCategories,
-
+  getActiveCategories,
+  getCategoryDependencies,
   updateCategory,
-
   deleteCategory,
-
+  restoreCategory,
+  permanentDeleteCategory,
   toggleCategoryStatus,
 } = require("../../controllers/admin/categoryController");
 
-// ==========================================
-// MIDDLEWARE
-// ==========================================
-
-const {
-  protect,
-
-  authorizeRoles,
-} = require("../../middleware/authMiddleware");
-
-// ==========================================
-// ADMIN ACCESS
-// ==========================================
-
 router.use(protect);
 
-router.use(authorizeRoles("ADMIN", "SUPER_ADMIN", "MAINTENANCE_MANAGER"));
+// Active maintenance categories for authenticated
+// Student, Warden, Technician and other portals.
+router.get("/active", getActiveCategories);
 
-// ==========================================
-// CREATE
-// ==========================================
-
-router.post(
-  "/create",
-
-  createCategory,
-);
-
-// ==========================================
-// GET ALL
-// ==========================================
-
+// Admin and Maintenance Manager can read categories.
 router.get(
   "/all",
-
+  authorizeRoles("ADMIN", "MAINTENANCE_MANAGER"),
   getCategories,
 );
 
-// ==========================================
-// UPDATE
-// ==========================================
+// Only ADMIN can modify category master data.
+router.use(authorizeRoles("ADMIN"));
 
-router.put(
-  "/update/:id",
+router.post("/create", createCategory);
 
-  updateCategory,
-);
+router.get("/dependencies/:id", getCategoryDependencies);
 
-// ==========================================
-// TOGGLE ACTIVE / INACTIVE
-// ==========================================
+router.put("/update/:id", updateCategory);
 
-router.put(
-  "/toggle/:id",
+router.put("/toggle/:id", toggleCategoryStatus);
 
-  toggleCategoryStatus,
-);
+// Legacy URL now archives.
+router.delete("/delete/:id", deleteCategory);
 
-// ==========================================
-// DELETE
-// ==========================================
+router.patch("/restore/:id", restoreCategory);
 
-router.delete(
-  "/delete/:id",
-
-  deleteCategory,
-);
-
-// ==========================================
-// EXPORT
-// ==========================================
+router.delete("/permanent/:id", permanentDeleteCategory);
 
 module.exports = router;
