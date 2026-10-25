@@ -8,52 +8,32 @@ const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 const {
   createHostel,
   getAllHostels,
+  getHostelDependencies,
   updateHostel,
   deleteHostel,
   restoreHostel,
   permanentDeleteHostel,
 } = require("../../controllers/admin/hostelController");
 
-// ==========================================
-// ADMIN AUTHORIZATION
-// ==========================================
-
 router.use(protect, authorizeRoles("ADMIN"));
 
-// ==========================================
-// GET ALL HOSTELS
-// ==========================================
-
+// List all, including archived
 router.get("/all", getAllHostels);
 
-// ==========================================
-// CREATE HOSTEL
-// ==========================================
+// Check linked Wardens, residents and complaints
+router.get("/:id/dependencies", getHostelDependencies);
 
+// Create and update
 router.post("/create", createHostel);
-
-// ==========================================
-// UPDATE HOSTEL
-// ==========================================
-
 router.put("/update/:id", updateHostel);
 
-// ==========================================
-// ARCHIVE HOSTEL
-// ==========================================
-
+// Archive
 router.delete("/delete/:id", deleteHostel);
 
-// ==========================================
-// RESTORE HOSTEL
-// ==========================================
-
+// Restore
 router.patch("/restore/:id", restoreHostel);
 
-// ==========================================
-// PERMANENT DELETE
-// ==========================================
-
+// Permanently delete unreferenced hostel
 router.delete("/permanent/:id", permanentDeleteHostel);
 
 module.exports = router;

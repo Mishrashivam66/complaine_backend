@@ -1,26 +1,21 @@
 "use strict";
 
 const mongoose = require("mongoose");
-
 const Hostel = require("../../models/Hostel");
 const User = require("../../models/User");
 const Complaint = require("../../models/Complaint");
 
 const TYPES = new Set(["BOYS", "GIRLS", "CO-ED", "STAFF"]);
-
 const CODE_PATTERN = /^[A-Z0-9][A-Z0-9_-]{0,11}$/;
+const CLOSED = ["COMPLETED", "RESOLVED", "CLOSED"];
 
 const normalize = (value) =>
-  String(value || "")
+  String(value ?? "")
     .trim()
     .toUpperCase();
 
-// ==========================================
-// LEGACY HOSTEL CODE
-// ==========================================
-
 const legacyCode = (name) =>
-  String(name || "")
+  String(name ?? "")
     .match(/\b(H\d+[A-Z]?)\b/i)?.[1]
     ?.toUpperCase() || "";
 
@@ -32,13 +27,10 @@ const present = (hostel) => ({
   hostelCode: codeOf(hostel),
 });
 
-const regexEscape = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const regexEscape = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// ==========================================
-// HOSTEL ALIASES
-// ==========================================
-
-const aliasesFor = (hostel) => {
+function hostelAliases(hostel) {
   const code = codeOf(hostel);
 
   return [
@@ -46,193 +38,29 @@ const aliasesFor = (hostel) => {
       [
         hostel.hostelName,
         code,
-        code ? `Hostel ${code}` : "",
-        code ? `Boys Hostel ${code}` : "",
-        code ? `Girls Hostel ${code}` : "",
-        code ? `Faculty Hostel ${code}` : "",
+        code && `Hostel ${code}`,
+        code && `Boys Hostel ${code}`,
+        code && `Girls Hostel ${code}`,
+        code && `Faculty Hostel ${code}`,
       ]
         .filter(Boolean)
-        .map((item) => String(item).trim()),
+        .map((value) => String(value).trim()),
     ),
-  ];
-};
+  ].map((value) => new RegExp(`^\\s*${regexEscape(value)}\\s*$`, "i"));
+}
 
-const aliasesAsRegex = (hostel) =>
-  aliasesFor(hostel).map(
-    (value) => new RegExp(`^\\s*${regexEscape(value)}\\s*$`, "i"),
-  );
-
-// ==========================================
-// CHECK HOSTEL DEPENDENCIES
-// ==========================================
-
-const dependencyCheck = async (hostel, { permanent = false } = {}) => {
-  const aliasRegex = aliasesAsRegex(hostel);
-
-  const personRefs = {
-    $or: [
-      {
-        assignedHostel: {
-          $in: aliasRegex,
-        },
-      },
-      {
-        hostel: {
-          $in: aliasRegex,
-        },
-      },
-    ],
-  };
-
-  const activeWarden = await User.exists({
-    role: "WARDEN",
-    isActive: true,
-    isDeleted: { $ne: true },
-    assignedHostel: {
-      $in: aliasRegex,
-    },
-  });
-
-  const currentHosteller = await User.exists({
-    role: "STUDENT",
-    isHosteller: true,
-
-    studentStatus: {
-      $ne: "LEFT_HOSTEL",
-    },
-
-    isDeleted: {
-      $ne: true,
-    },
-
-    hostel: {
-      $in: aliasRegex,
-    },
-  });
-
-  const openComplaint = await Complaint.exists({
-    complaintArea: "HOSTEL",
-
-    hostel: {
-      $in: aliasRegex,
-    },
-
-    status: {
-      $nin: ["COMPLETED", "RESOLVED", "CLOSED"],
-    },
-  });
-
-  if (activeWarden) {
-    return "Reassign the active Warden " + "before archiving this hostel";
-  }
-
-  if (currentHosteller) {
-    return "Move current hostel residents " + "before archiving this hostel";
-  }
-
-  if (openComplaint) {
-    return "Resolve or reassign open hostel " + "complaints first";
-  }
-
-  if (!permanent) {
-    return null;
-  }
-
-  // ======================================
-  // HISTORICAL ACCOUNT REFERENCES
-  // ======================================
-
-  if (await User.exists(personRefs)) {
-    return "Hostel has staff/student account history; " + "keep it archived";
-  }
-
-  // ======================================
-  // HISTORICAL COMPLAINT REFERENCES
-  // ======================================
-
-  if (
-    await Complaint.exists({
-      hostel: {
-        $in: aliasRegex,
-      },
-    })
-  ) {
-    return "Hostel has complaint history; " + "keep it archived";
-  }
-
-  // ======================================
-  // LEGACY COLLECTION REFERENCES
-  // ======================================
-
-  const collectionNames = [
-    "rooms",
-    "roomallocations",
-    "locations",
-    "jobcards",
-    "maintenancetasks",
-    "maintenancehistories",
-  ];
-
-  for (const name of collectionNames) {
-    const collection = mongoose.connection.db?.collection(name);
-
-    if (!collection) continue;
-
-    const linked = await collection.findOne(
-      {
-        $or: [
-          {
-            hostel: {
-              $in: aliasRegex,
-            },
-          },
-          {
-            hostel: hostel._id,
-          },
-          {
-            hostelName: {
-              $in: aliasRegex,
-            },
-          },
-          {
-            hostelCode: {
-              $in: aliasRegex,
-            },
-          },
-          {
-            hostelId: hostel._id,
-          },
-          {
-            hostelRef: hostel._id,
-          },
-          {
-            locationCode: {
-              $in: aliasRegex,
-            },
-          },
-        ],
-      },
-      {
-        projection: {
-          _id: 1,
-        },
-      },
-    );
-
-    if (linked) {
-      return `Hostel has legacy ${name} records; ` + "keep it archived";
-    }
-  }
-
-  return null;
-};
+function badInput(message) {
+  const error = new Error(message);
+  error.statusCode = 400;
+  return error;
+}
 
 // ==========================================
-// VALIDATE INPUT
+// VALIDATE HOSTEL FIELDS
 // ==========================================
 
-const parseInput = (body, { creating = false } = {}) => {
-  const data = {};
+function parseFields(body = {}, { creating = false } = {}) {
+  const fields = {};
 
   if (creating || body.hostelName !== undefined) {
     if (
@@ -240,42 +68,40 @@ const parseInput = (body, { creating = false } = {}) => {
       !body.hostelName.trim() ||
       body.hostelName.trim().length > 120
     ) {
-      throw new Error(
-        "Valid hostel name is required " + "(max 120 characters)",
-      );
+      throw badInput("Hostel name is required (max 120 characters)");
     }
 
-    data.hostelName = body.hostelName.trim();
+    fields.hostelName = body.hostelName.trim();
   }
 
   if (creating || body.hostelCode !== undefined) {
     const code = normalize(body.hostelCode);
 
     if (!CODE_PATTERN.test(code)) {
-      throw new Error("Valid Hostel Code is required (e.g. H1)");
+      throw badInput("Valid Hostel Code is required (e.g. H1)");
     }
 
-    data.hostelCode = code;
+    fields.hostelCode = code;
   }
 
   if (body.hostelType !== undefined) {
     const type = normalize(body.hostelType);
 
     if (!TYPES.has(type)) {
-      throw new Error("Invalid hostel type");
+      throw badInput("Invalid hostel type");
     }
 
-    data.hostelType = type;
+    fields.hostelType = type;
   }
 
   if (body.totalFloors !== undefined) {
     const n = Number(body.totalFloors);
 
     if (!Number.isInteger(n) || n < 0 || n > 100) {
-      throw new Error("Total floors must be 0–100");
+      throw badInput("Total floors must be from 0 to 100");
     }
 
-    data.totalFloors = n;
+    fields.totalFloors = n;
   }
 
   if (body.description !== undefined) {
@@ -283,56 +109,43 @@ const parseInput = (body, { creating = false } = {}) => {
       typeof body.description !== "string" ||
       body.description.length > 1000
     ) {
-      throw new Error("Description is too long");
+      throw badInput("Description must be text with maximum 1000 characters");
     }
 
-    data.description = body.description.trim();
+    fields.description = body.description.trim();
   }
 
   if (body.isActive !== undefined) {
     if (typeof body.isActive !== "boolean") {
-      throw new Error("Invalid status");
+      throw badInput("Invalid hostel status");
     }
 
-    data.isActive = body.isActive;
+    fields.isActive = body.isActive;
   }
 
-  return data;
-};
+  return fields;
+}
 
 // ==========================================
-// CHECK DUPLICATE CODE / NAME
+// UNIQUE HOSTEL VALIDATION
 // ==========================================
 
-const hasDuplicate = async (code, name, excludedId) => {
-  const rows = await Hostel.find(
-    excludedId
-      ? {
-          _id: {
-            $ne: excludedId,
-          },
-        }
-      : {},
-  )
-    .select("hostelCode hostelName")
+async function duplicateFound(code, name, excludedId) {
+  const rows = await Hostel.find(excludedId ? { _id: { $ne: excludedId } } : {})
+    .select("hostelName hostelCode")
     .lean();
 
   return rows.some(
-    (hostel) =>
-      codeOf(hostel) === code ||
-      normalize(hostel.hostelName) === normalize(name),
+    (item) =>
+      codeOf(item) === code || normalize(item.hostelName) === normalize(name),
   );
-};
+}
 
-// ==========================================
-// GET HOSTEL BY ID
-// ==========================================
-
-const getById = async (req, res) => {
+async function findHostel(req, res) {
   if (!mongoose.isValidObjectId(req.params.id)) {
     res.status(400).json({
       success: false,
-      message: "Invalid hostel ID",
+      message: "Invalid Hostel ID",
     });
 
     return null;
@@ -348,13 +161,9 @@ const getById = async (req, res) => {
   }
 
   return hostel;
-};
+}
 
-// ==========================================
-// ERROR HANDLER
-// ==========================================
-
-const fail = (res, error) => {
+function handleError(res, error) {
   if (error?.code === 11000) {
     return res.status(409).json({
       success: false,
@@ -363,51 +172,205 @@ const fail = (res, error) => {
   }
 
   if (
-    error?.name === "ValidationError" ||
-    error?.name === "CastError" ||
-    error?.isInputError
+    error?.statusCode ||
+    ["ValidationError", "CastError"].includes(error?.name)
   ) {
-    return res.status(400).json({
+    return res.status(error.statusCode || 400).json({
       success: false,
-      message: error?.isInputError ? error.message : "Invalid hostel details",
+      message: error.statusCode ? error.message : "Invalid Hostel details",
     });
   }
 
-  console.error("HOSTEL ERROR:", error);
+  console.error("HOSTEL MANAGEMENT ERROR:", error);
 
   return res.status(500).json({
     success: false,
     message: "Hostel operation failed",
   });
-};
+}
 
-const readInput = (body, options) => {
-  try {
-    return parseInput(body || {}, options);
-  } catch (error) {
-    error.isInputError = true;
-    throw error;
+// ==========================================
+// CHECK HOSTEL DEPENDENCIES
+// ==========================================
+
+async function dependencyReport(hostel, { checkExtra = false } = {}) {
+  const refs = hostelAliases(hostel);
+
+  const userRefs = {
+    $or: [{ assignedHostel: { $in: refs } }, { hostel: { $in: refs } }],
+  };
+
+  const complaintRefs = {
+    hostel: { $in: refs },
+  };
+
+  const [
+    activeWardens,
+    currentResidents,
+    openComplaints,
+    linkedUsers,
+    complaintCount,
+  ] = await Promise.all([
+    User.find({
+      role: "WARDEN",
+      assignedHostel: { $in: refs },
+      isActive: { $ne: false },
+      isDeleted: { $ne: true },
+    })
+      .select("name email assignedHostel")
+      .lean(),
+
+    User.countDocuments({
+      role: "STUDENT",
+      isHosteller: true,
+      hostel: { $in: refs },
+      isDeleted: { $ne: true },
+      studentStatus: { $ne: "LEFT_HOSTEL" },
+    }),
+
+    Complaint.countDocuments({
+      ...complaintRefs,
+      status: { $nin: CLOSED },
+    }),
+
+    User.countDocuments(userRefs),
+
+    Complaint.countDocuments(complaintRefs),
+  ]);
+
+  const report = {
+    hostelCode: codeOf(hostel),
+    hostelName: hostel.hostelName,
+
+    activeWardens,
+    activeWardenCount: activeWardens.length,
+
+    currentResidentCount: currentResidents,
+    openComplaintCount: openComplaints,
+
+    linkedUserCount: linkedUsers,
+    complaintCount,
+
+    otherReferences: [],
+    fullyChecked: checkExtra,
+  };
+
+  if (!checkExtra) {
+    return report;
   }
-};
+
+  const database = mongoose.connection.db;
+
+  if (!database) {
+    throw new Error("Database is not connected");
+  }
+
+  // Only check explicit hostel references.
+  // Do not match unrelated Building names.
+
+  const collectionsToCheck = new Set([
+    "rooms",
+    "roomallocations",
+    "locations",
+    "jobcards",
+    "maintenancetasks",
+    "maintenancehistories",
+    "workorders",
+    "materialrequests",
+    "issueditems",
+    "studenthistories",
+    "notices",
+    "emergencyalerts",
+  ]);
+
+  const available = await database
+    .listCollections({}, { nameOnly: true })
+    .toArray();
+
+  for (const { name } of available) {
+    if (!collectionsToCheck.has(name.toLowerCase())) {
+      continue;
+    }
+
+    const fields = ["hostel", "hostelName", "hostelCode", "assignedHostel"];
+
+    const candidates = [
+      ...fields.map((field) => ({
+        [field]: { $in: refs },
+      })),
+
+      ...["hostel", "hostelId", "hostelRef"].map((field) => ({
+        [field]: hostel._id,
+      })),
+    ];
+
+    const found = await database
+      .collection(name)
+      .findOne({ $or: candidates }, { projection: { _id: 1 } });
+
+    if (found) {
+      report.otherReferences.push(name);
+    }
+  }
+
+  return report;
+}
+
+// ==========================================
+// DEPENDENCY BLOCKING RULES
+// ==========================================
+
+function activeBlockingReasons(report) {
+  const reasons = [];
+
+  if (report.activeWardenCount) {
+    reasons.push("Reassign the active Warden before archiving this hostel");
+  }
+
+  if (report.currentResidentCount) {
+    reasons.push("Move current hostel residents before archiving this hostel");
+  }
+
+  if (report.openComplaintCount) {
+    reasons.push("Resolve or reassign open hostel complaints first");
+  }
+
+  return reasons;
+}
+
+function permanentBlockingReasons(report) {
+  return [
+    ...activeBlockingReasons(report),
+
+    ...(report.linkedUserCount
+      ? ["Hostel has linked staff/student account history"]
+      : []),
+
+    ...(report.complaintCount ? ["Hostel has existing complaint history"] : []),
+
+    ...(report.otherReferences.length
+      ? [`Hostel is referenced in: ${report.otherReferences.join(", ")}`]
+      : []),
+  ];
+}
 
 // ==========================================
 // GET ALL HOSTELS
 // ==========================================
 
-const getAllHostels = async (req, res) => {
+exports.getAllHostels = async (req, res) => {
   try {
-    const includeArchived = req.query.includeArchived === "true";
+    const query =
+      req.query.includeArchived === "true"
+        ? {}
+        : {
+            isDeleted: { $ne: true },
+            isActive: { $ne: false },
+          };
 
-    const filter = includeArchived
-      ? {}
-      : {
-          isDeleted: { $ne: true },
-          isActive: { $ne: false },
-        };
-
-    const [rows, totalHostels, activeHostels, archivedHostels] =
+    const [records, totalHostels, activeHostels, archivedHostels] =
       await Promise.all([
-        Hostel.find(filter).sort({ hostelName: 1 }).lean(),
+        Hostel.find(query).sort({ hostelName: 1 }).lean(),
 
         Hostel.countDocuments({
           isDeleted: { $ne: true },
@@ -425,8 +388,7 @@ const getAllHostels = async (req, res) => {
 
     return res.json({
       success: true,
-
-      hostels: rows.map(present),
+      hostels: records.map(present),
 
       analytics: {
         totalHostels,
@@ -436,7 +398,28 @@ const getAllHostels = async (req, res) => {
       },
     });
   } catch (error) {
-    return fail(res, error);
+    return handleError(res, error);
+  }
+};
+
+// ==========================================
+// GET HOSTEL DEPENDENCIES
+// ==========================================
+
+exports.getHostelDependencies = async (req, res) => {
+  try {
+    const hostel = await findHostel(req, res);
+
+    if (!hostel) return;
+
+    const dependencies = await dependencyReport(hostel, { checkExtra: true });
+
+    return res.json({
+      success: true,
+      dependencies,
+    });
+  } catch (error) {
+    return handleError(res, error);
   }
 };
 
@@ -444,13 +427,13 @@ const getAllHostels = async (req, res) => {
 // CREATE HOSTEL
 // ==========================================
 
-const createHostel = async (req, res) => {
+exports.createHostel = async (req, res) => {
   try {
-    const data = readInput(req.body, {
+    const data = parseFields(req.body, {
       creating: true,
     });
 
-    if (await hasDuplicate(data.hostelCode, data.hostelName)) {
+    if (await duplicateFound(data.hostelCode, data.hostelName)) {
       return res.status(409).json({
         success: false,
         message: "Hostel name or code already exists",
@@ -465,11 +448,11 @@ const createHostel = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      hostel: present(hostel.toObject()),
       message: "Hostel created",
+      hostel: present(hostel.toObject()),
     });
   } catch (error) {
-    return fail(res, error);
+    return handleError(res, error);
   }
 };
 
@@ -477,9 +460,9 @@ const createHostel = async (req, res) => {
 // UPDATE HOSTEL
 // ==========================================
 
-const updateHostel = async (req, res) => {
+exports.updateHostel = async (req, res) => {
   try {
-    const hostel = await getById(req, res);
+    const hostel = await findHostel(req, res);
 
     if (!hostel) return;
 
@@ -490,10 +473,10 @@ const updateHostel = async (req, res) => {
       });
     }
 
-    const data = readInput(req.body);
+    const changes = parseFields(req.body);
     const code = codeOf(hostel);
 
-    if (data.hostelCode && code && data.hostelCode !== code) {
+    if (changes.hostelCode && code && changes.hostelCode !== code) {
       return res.status(409).json({
         success: false,
         message: "Hostel Code cannot change after creation",
@@ -501,9 +484,9 @@ const updateHostel = async (req, res) => {
     }
 
     if (
-      await hasDuplicate(
-        data.hostelCode || code,
-        data.hostelName || hostel.hostelName,
+      await duplicateFound(
+        changes.hostelCode || code,
+        changes.hostelName || hostel.hostelName,
         hostel._id,
       )
     ) {
@@ -514,45 +497,46 @@ const updateHostel = async (req, res) => {
     }
 
     if (
-      data.hostelName &&
-      normalize(data.hostelName) !== normalize(hostel.hostelName)
+      changes.hostelName &&
+      normalize(changes.hostelName) !== normalize(hostel.hostelName)
     ) {
-      const historicalReason = await dependencyCheck(hostel, {
-        permanent: true,
-      });
+      const history = await dependencyReport(hostel, { checkExtra: true });
 
-      if (historicalReason) {
+      if (permanentBlockingReasons(history).length) {
         return res.status(409).json({
           success: false,
+
           message:
-            "Hostel has linked records. Keep " +
-            "its current name or migrate references first",
+            "Hostel has existing references. Migrate references before renaming this hostel.",
+
+          dependencies: history,
         });
       }
     }
 
-    if (data.isActive === false && hostel.isActive !== false) {
-      const reason = await dependencyCheck(hostel);
+    if (changes.isActive === false && hostel.isActive !== false) {
+      const report = await dependencyReport(hostel);
+      const problems = activeBlockingReasons(report);
 
-      if (reason) {
+      if (problems.length) {
         return res.status(409).json({
           success: false,
-          message: reason,
+          message: problems[0],
+          dependencies: report,
         });
       }
     }
 
-    Object.assign(hostel, data);
-
+    Object.assign(hostel, changes);
     await hostel.save();
 
     return res.json({
       success: true,
-      hostel: present(hostel.toObject()),
       message: "Hostel updated",
+      hostel: present(hostel.toObject()),
     });
   } catch (error) {
-    return fail(res, error);
+    return handleError(res, error);
   }
 };
 
@@ -560,9 +544,9 @@ const updateHostel = async (req, res) => {
 // ARCHIVE HOSTEL
 // ==========================================
 
-const deleteHostel = async (req, res) => {
+exports.deleteHostel = async (req, res) => {
   try {
-    const hostel = await getById(req, res);
+    const hostel = await findHostel(req, res);
 
     if (!hostel) return;
 
@@ -573,12 +557,14 @@ const deleteHostel = async (req, res) => {
       });
     }
 
-    const reason = await dependencyCheck(hostel);
+    const report = await dependencyReport(hostel);
+    const problems = activeBlockingReasons(report);
 
-    if (reason) {
+    if (problems.length) {
       return res.status(409).json({
         success: false,
-        message: reason,
+        message: problems[0],
+        dependencies: report,
       });
     }
 
@@ -590,51 +576,10 @@ const deleteHostel = async (req, res) => {
     return res.json({
       success: true,
       message: "Hostel archived; history preserved",
+      hostel: present(hostel.toObject()),
     });
   } catch (error) {
-    return fail(res, error);
-  }
-};
-
-// ==========================================
-// PERMANENT DELETE HOSTEL
-// ==========================================
-
-const permanentDeleteHostel = async (req, res) => {
-  try {
-    const hostel = await getById(req, res);
-
-    if (!hostel) return;
-
-    if (!hostel.isDeleted) {
-      return res.status(409).json({
-        success: false,
-        message: "Archive the hostel before permanent deletion",
-      });
-    }
-
-    const reason = await dependencyCheck(hostel, {
-      permanent: true,
-    });
-
-    if (reason) {
-      return res.status(409).json({
-        success: false,
-        message: reason,
-      });
-    }
-
-    await Hostel.deleteOne({
-      _id: hostel._id,
-      isDeleted: true,
-    });
-
-    return res.json({
-      success: true,
-      message: "Unreferenced hostel permanently deleted",
-    });
-  } catch (error) {
-    return fail(res, error);
+    return handleError(res, error);
   }
 };
 
@@ -642,11 +587,19 @@ const permanentDeleteHostel = async (req, res) => {
 // RESTORE HOSTEL
 // ==========================================
 
-const restoreHostel = async (req, res) => {
+exports.restoreHostel = async (req, res) => {
   try {
-    const hostel = await getById(req, res);
+    const hostel = await findHostel(req, res);
 
     if (!hostel) return;
+
+    if (!hostel.isDeleted) {
+      return res.json({
+        success: true,
+        message: "Hostel is not archived",
+        hostel: present(hostel.toObject()),
+      });
+    }
 
     hostel.isDeleted = false;
     hostel.isActive = true;
@@ -655,23 +608,60 @@ const restoreHostel = async (req, res) => {
 
     return res.json({
       success: true,
-      hostel: present(hostel.toObject()),
       message: "Hostel restored",
+      hostel: present(hostel.toObject()),
     });
   } catch (error) {
-    return fail(res, error);
+    return handleError(res, error);
   }
 };
 
 // ==========================================
-// EXPORTS
+// PERMANENT DELETE HOSTEL
 // ==========================================
 
-module.exports = {
-  createHostel,
-  getAllHostels,
-  updateHostel,
-  deleteHostel,
-  restoreHostel,
-  permanentDeleteHostel,
+exports.permanentDeleteHostel = async (req, res) => {
+  try {
+    const hostel = await findHostel(req, res);
+
+    if (!hostel) return;
+
+    if (!hostel.isDeleted) {
+      return res.status(409).json({
+        success: false,
+        message: "Archive hostel before permanent deletion",
+      });
+    }
+
+    const report = await dependencyReport(hostel, { checkExtra: true });
+
+    const problems = permanentBlockingReasons(report);
+
+    if (problems.length) {
+      return res.status(409).json({
+        success: false,
+        message: problems[0],
+        dependencies: report,
+      });
+    }
+
+    const deleted = await Hostel.deleteOne({
+      _id: hostel._id,
+      isDeleted: true,
+    });
+
+    if (!deleted.deletedCount) {
+      return res.status(409).json({
+        success: false,
+        message: "Hostel changed; refresh and retry",
+      });
+    }
+
+    return res.json({
+      success: true,
+      message: "Unreferenced hostel permanently deleted",
+    });
+  } catch (error) {
+    return handleError(res, error);
+  }
 };
