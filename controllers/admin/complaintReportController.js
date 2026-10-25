@@ -594,247 +594,380 @@ async function generateExcel(rows, stats, applied) {
 
 async function generatePdf(rows, stats, applied) {
   const PDFDocument = require("pdfkit");
-
   const fs = require("fs");
+
+  // ==========================================
+  // PDF CONFIGURATION
+  // ==========================================
 
   const doc = new PDFDocument({
     size: "A4",
     layout: "landscape",
-    margin: 28,
+    margins: {
+      top: 28,
+      bottom: 28,
+      left: 28,
+      right: 28,
+    },
     bufferPages: true,
+    autoFirstPage: true,
   });
 
   const chunks = [];
 
   const completed = new Promise((resolve, reject) => {
-    doc.on("data", (chunk) => chunks.push(chunk));
+    doc.on("data", (chunk) => {
+      chunks.push(chunk);
+    });
 
-    doc.on("end", () => resolve(Buffer.concat(chunks)));
+    doc.on("end", () => {
+      resolve(Buffer.concat(chunks));
+    });
 
     doc.on("error", reject);
   });
 
-  // ----------------------------------------
+  // ==========================================
   // PDF FONT
-  // ----------------------------------------
+  // ==========================================
 
-  const font = process.env.REPORT_FONT_PATH;
+  const customFont = process.env.REPORT_FONT_PATH;
 
-  if (font && fs.existsSync(font)) {
-    doc.font(font);
+  if (customFont && fs.existsSync(customFont)) {
+    doc.font(customFont);
   } else {
     doc.font("Helvetica");
   }
 
-  // ----------------------------------------
-  // COLORS AND COLUMN WIDTHS
-  // ----------------------------------------
+  // ==========================================
+  // COLORS
+  // ==========================================
 
   const NAVY = "#102B52";
+  const GOLD = "#EAC16A";
   const WHITE = "#FFFFFF";
   const DARK = "#192E4A";
   const MUTED = "#62728A";
+  const LIGHT = "#F4F6FA";
 
-  const margin = 28;
+  // ==========================================
+  // PAGE DIMENSIONS
+  // ==========================================
 
-  const width = doc.page.width - margin * 2;
+  const MARGIN = 28;
 
-  const cols = [74, 62, 113, 84, 100, 57, 90, 96, 83];
+  const PAGE_WIDTH = doc.page.width;
+  const PAGE_HEIGHT = doc.page.height;
 
-  const titles = [
-    "ID",
-    "Date",
-    "Title",
-    "Category",
-    "Location",
-    "Priority",
-    "Status",
-    "Reporter",
-    "Technician",
+  const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
+
+  const ROW_HEIGHT = 27;
+  const HEADER_HEIGHT = 26;
+
+  // Reserve enough space for footer.
+  const TABLE_BOTTOM = PAGE_HEIGHT - 70;
+
+  // ==========================================
+  // TABLE COLUMNS
+  // ==========================================
+
+  const columns = [
+    { title: "ID", width: 74 },
+    { title: "Date", width: 62 },
+    { title: "Title", width: 113 },
+    { title: "Category", width: 84 },
+    { title: "Location", width: 100 },
+    { title: "Priority", width: 57 },
+    { title: "Status", width: 90 },
+    { title: "Reporter", width: 96 },
+    { title: "Technician", width: 83 },
   ];
 
-  // ----------------------------------------
-  // TABLE HEADER
-  // ----------------------------------------
+  // ==========================================
+  // SAFE TEXT
+  // ==========================================
 
-  const drawTableHeader = (y) => {
-    doc.rect(margin, y, width, 25).fill(NAVY);
-
-    let x = margin;
-
-    titles.forEach((title, i) => {
-      doc
-        .fillColor(WHITE)
-        .fontSize(8)
-        .text(title, x + 4, y + 8, {
-          width: cols[i] - 7,
-
-          lineBreak: false,
-        });
-
-      x += cols[i];
-    });
-
-    return y + 25;
+  const safeText = (value, max = 200) => {
+    return (
+      String(value ?? "—")
+        .replace(/[\x00-\x1F\x7F]/g, " ")
+        .replace(/\s+/g, " ")
+        .trim()
+        .slice(0, max) || "—"
+    );
   };
 
-  // ----------------------------------------
-  // PAGE TITLE
-  // ----------------------------------------
+  // ==========================================
+  // FIXED POSITION TEXT
+  // Prevents unwanted wrapping/page breaks
+  // ==========================================
 
-  doc.rect(0, 0, doc.page.width, 72).fill(NAVY);
+  const printText = (
+    value,
+    x,
+    y,
+    width,
+    { fontSize = 8, color = DARK, height = 13, align = "left" } = {},
+  ) => {
+    doc.fillColor(color).fontSize(fontSize).text(safeText(value), x, y, {
+      width,
+      height,
+      align,
+      lineBreak: false,
+      ellipsis: true,
+    });
+  };
 
-  doc.fillColor(WHITE).fontSize(18).text("AmiMaintain", margin, 17);
+  // ==========================================
+  // DRAW PAGE TITLE
+  // FIRST PAGE ONLY
+  // ==========================================
 
-  doc
-    .fillColor("#EAC16A")
-    .fontSize(10)
-    .text("MAINTENANCE COMPLAINT REPORT", margin, 42);
+  const drawReportTitle = () => {
+    doc.rect(0, 0, PAGE_WIDTH, 72).fill(NAVY);
 
-  // ----------------------------------------
-  // REPORT FILTER DETAILS
-  // ----------------------------------------
-
-  doc
-    .fillColor(MUTED)
-    .fontSize(9)
-    .text(`Generated (IST): ${istDate(new Date())}`, margin, 82);
-
-  doc.text(
-    `Period: ${applied.startDate || "All"} to ${applied.endDate || "Time"}`,
-    margin,
-    98,
-  );
-
-  doc.text(
-    `Area: ${applied.area} | Hostel / Block: ${applied.scope} | Location: ${applied.issueLocation}`,
-    margin,
-    114,
-    { width },
-  );
-
-  doc.text(
-    `Status: ${applied.status} | Priority: ${applied.priority} | Category: ${applied.category} | Search: ${applied.search || "None"}`,
-    margin,
-    130,
-    { width },
-  );
-
-  // ----------------------------------------
-  // SUMMARY STATISTIC BOXES
-  // ----------------------------------------
-
-  let x = margin;
-
-  const summaryItems = [
-    ["TOTAL", stats.total],
-    ["PENDING", stats.pending],
-    ["IN PROGRESS", stats.inProgress],
-    ["WAITING", stats.waitingMaterial],
-    ["COMPLETED", stats.completed],
-    ["HIGH/URGENT", stats.highPriority],
-    ["OVERDUE", stats.overdue],
-  ];
-
-  for (const [label, number] of summaryItems) {
-    doc.roundedRect(x, 153, 105, 42, 5).fill("#F2F5F9");
-
-    doc
-      .fillColor(NAVY)
-      .fontSize(15)
-      .text(String(number), x + 9, 160);
-
-    doc
-      .fillColor(MUTED)
-      .fontSize(7)
-      .text(label, x + 9, 181);
-
-    x += 112;
-  }
-
-  // ----------------------------------------
-  // COMPLAINT TABLE
-  // ----------------------------------------
-
-  let y = drawTableHeader(210);
-
-  if (!rows.length) {
-    doc
-      .fillColor(MUTED)
-      .fontSize(10)
-      .text("No complaints match these filters.", margin, y + 14);
-  }
-
-  rows.forEach((r, index) => {
-    if (y + 26 > doc.page.height - 39) {
-      doc.addPage();
-
-      y = drawTableHeader(40);
-    }
-
-    if (index % 2 === 0) {
-      doc.rect(margin, y, width, 26).fill("#F4F6FA");
-    }
-
-    const data = [
-      r.complaintId,
-      istDate(r.createdAt, false),
-      r.title,
-      r.category,
-      place(r),
-      r.priority,
-      r.status,
-      r.createdBy?.name,
-      r.assignedTo?.name,
-    ];
-
-    let offset = margin;
-
-    data.forEach((value, i) => {
-      doc
-        .fillColor(DARK)
-        .fontSize(7.5)
-        .text(text(value || "—", 160), offset + 4, y + 5, {
-          width: cols[i] - 7,
-
-          height: 19,
-          ellipsis: true,
-        });
-
-      offset += cols[i];
+    printText("AmiMaintain", MARGIN, 16, 350, {
+      fontSize: 19,
+      color: WHITE,
+      height: 26,
     });
 
-    y += 26;
-  });
+    printText("MAINTENANCE COMPLAINT REPORT", MARGIN, 43, 420, {
+      fontSize: 10,
+      color: GOLD,
+    });
 
-  // ----------------------------------------
-  // PAGE FOOTERS
-  // ----------------------------------------
+    // ======================================
+    // REPORT DETAILS
+    // ======================================
 
-  const count = doc.bufferedPageRange().count;
+    printText(
+      `Generated (IST): ${istDate(new Date())}`,
+      MARGIN,
+      83,
+      CONTENT_WIDTH,
+      {
+        fontSize: 9,
+        color: MUTED,
+      },
+    );
 
-  for (let p = 0; p < count; p += 1) {
+    printText(
+      `Period: ${applied.startDate || "All"} to ${applied.endDate || "Time"}`,
+      MARGIN,
+      100,
+      CONTENT_WIDTH,
+      {
+        fontSize: 9,
+        color: MUTED,
+      },
+    );
+
+    printText(
+      `Area: ${applied.area || "ALL"} | Hostel / Block: ${applied.scope || "ALL"} | Location: ${applied.issueLocation || "ALL"}`,
+      MARGIN,
+      117,
+      CONTENT_WIDTH,
+      {
+        fontSize: 8,
+        color: MUTED,
+      },
+    );
+
+    printText(
+      `Status: ${applied.status || "ALL"} | Priority: ${applied.priority || "ALL"} | Category: ${applied.category || "ALL"} | Search: ${applied.search || "None"}`,
+      MARGIN,
+      134,
+      CONTENT_WIDTH,
+      {
+        fontSize: 8,
+        color: MUTED,
+      },
+    );
+
+    // ======================================
+    // SUMMARY STATISTICS
+    // ======================================
+
+    const summaryItems = [
+      ["TOTAL", stats.total],
+      ["PENDING", stats.pending],
+      ["IN PROGRESS", stats.inProgress],
+      ["WAITING", stats.waitingMaterial],
+      ["COMPLETED", stats.completed],
+      ["HIGH / URGENT", stats.highPriority],
+      ["OVERDUE", stats.overdue],
+    ];
+
+    const CARD_WIDTH = 105;
+    const CARD_GAP = 7;
+    const CARD_Y = 159;
+
+    summaryItems.forEach(([label, number], index) => {
+      const x = MARGIN + index * (CARD_WIDTH + CARD_GAP);
+
+      doc.roundedRect(x, CARD_Y, CARD_WIDTH, 44, 5).fill(LIGHT);
+
+      printText(String(number ?? 0), x + 9, CARD_Y + 7, CARD_WIDTH - 18, {
+        fontSize: 16,
+        color: NAVY,
+        height: 20,
+      });
+
+      printText(label, x + 9, CARD_Y + 30, CARD_WIDTH - 18, {
+        fontSize: 7,
+        color: MUTED,
+        height: 10,
+      });
+    });
+  };
+
+  // ==========================================
+  // DRAW TABLE HEADER
+  // ==========================================
+
+  const drawTableHeader = (y) => {
+    doc.rect(MARGIN, y, CONTENT_WIDTH, HEADER_HEIGHT).fill(NAVY);
+
+    let x = MARGIN;
+
+    columns.forEach((column) => {
+      printText(column.title, x + 4, y + 8, column.width - 8, {
+        fontSize: 8,
+        color: WHITE,
+        height: 12,
+      });
+
+      x += column.width;
+    });
+
+    return y + HEADER_HEIGHT;
+  };
+
+  // ==========================================
+  // DRAW COMPLAINT ROW
+  // ==========================================
+
+  const drawComplaintRow = (row, index, y) => {
+    if (index % 2 === 0) {
+      doc.rect(MARGIN, y, CONTENT_WIDTH, ROW_HEIGHT).fill(LIGHT);
+    }
+
+    const values = [
+      row.complaintId || "—",
+      istDate(row.createdAt, false),
+      row.title || "—",
+      row.category || "—",
+      place(row),
+      row.priority || "—",
+      row.status || "—",
+      row.createdBy?.name || "—",
+      row.assignedTo?.name || "—",
+    ];
+
+    let x = MARGIN;
+
+    values.forEach((value, i) => {
+      printText(value, x + 4, y + 7, columns[i].width - 8, {
+        fontSize: 7.5,
+        color: DARK,
+        height: 13,
+      });
+
+      x += columns[i].width;
+    });
+
+    return y + ROW_HEIGHT;
+  };
+
+  // ==========================================
+  // BUILD FIRST PAGE
+  // ==========================================
+
+  drawReportTitle();
+
+  let currentY = drawTableHeader(221);
+
+  // ==========================================
+  // NO COMPLAINTS
+  // ==========================================
+
+  if (!rows.length) {
+    printText(
+      "No complaints found for the selected filters.",
+      MARGIN + 10,
+      currentY + 17,
+      CONTENT_WIDTH - 20,
+      {
+        fontSize: 10,
+        color: MUTED,
+        height: 18,
+      },
+    );
+  }
+
+  // ==========================================
+  // COMPLAINT ROWS + PAGINATION
+  // ==========================================
+
+  for (let index = 0; index < rows.length; index++) {
+    const row = rows[index];
+
+    // Add a page only if the next row
+    // cannot fit in the available area.
+    if (currentY + ROW_HEIGHT > TABLE_BOTTOM) {
+      doc.addPage();
+
+      // Continuation page starts with header.
+      currentY = drawTableHeader(42);
+    }
+
+    currentY = drawComplaintRow(row, index, currentY);
+  }
+
+  // ==========================================
+  // CORRECT PAGE FOOTERS
+  // ==========================================
+
+  const pageRange = doc.bufferedPageRange();
+
+  const startPage = pageRange.start;
+  const totalPages = pageRange.count;
+
+  for (let p = startPage; p < startPage + totalPages; p++) {
     doc.switchToPage(p);
 
+    const footerLineY = PAGE_HEIGHT - 50;
+
+    const footerTextY = PAGE_HEIGHT - 43;
+
+    // Footer line
     doc
-      .moveTo(margin, doc.page.height - 28)
-      .lineTo(doc.page.width - margin, doc.page.height - 28)
+      .moveTo(MARGIN, footerLineY)
+      .lineTo(PAGE_WIDTH - MARGIN, footerLineY)
       .strokeColor("#C89A45")
+      .lineWidth(0.7)
       .stroke();
 
-    doc
-      .fillColor(MUTED)
-      .fontSize(7)
-      .text(
-        `AmiMaintain | Confidential Admin Report | Page ${p + 1} of ${count}`,
-        margin,
-        doc.page.height - 24,
-        {
-          width,
-          align: "right",
-        },
-      );
+    // Footer text is now within the
+    // printable region, not below margin.
+    printText(
+      `AmiMaintain | Confidential Admin Report | Page ${p - startPage + 1} of ${totalPages}`,
+      MARGIN,
+      footerTextY,
+      CONTENT_WIDTH,
+      {
+        fontSize: 7,
+        color: MUTED,
+        height: 10,
+        align: "right",
+      },
+    );
   }
+
+  // ==========================================
+  // COMPLETE PDF
+  // ==========================================
 
   doc.end();
 
