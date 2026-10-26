@@ -1,77 +1,85 @@
 "use strict";
 
 const mongoose = require("mongoose");
-
 const Complaint = require("../../models/Complaint");
 const User = require("../../models/User");
+const Category = require("../../models/Category");
 const JobCard = require("../../models/JobCard");
 const sendNotification = require("../../utils/sendNotification");
 
-// ==========================================
-// CONFIG
-// ==========================================
-
-const TECHNICIAN_ROLES = ["TECHNICIAN", "WORKER"];
-
+const TECH_ROLES = ["TECHNICIAN", "WORKER"];
 const SHIFTS = ["DAY", "NIGHT", "24x7"];
+const MANAGER_STATUSES = ["ACTIVE", "OFFLINE", "ON_LEAVE"];
+const CLOSED = ["RESOLVED", "CLOSED"];
 
-const MANAGED_STATUSES = ["ACTIVE", "OFFLINE", "ON_LEAVE"];
-
-const OPEN_JOB_STATUSES = [
-  "ASSIGNED",
-  "IN_PROGRESS",
-  "WAITING_MATERIAL",
-  "AWAITING_STUDENT_CONFIRMATION",
-];
-
-// Example university shift times.
-// Confirm actual timings before production.
-const SHIFT_WINDOWS = {
-  DAY: {
-    from: 9 * 60,
-    to: 17 * 60,
-  },
-  NIGHT: {
-    from: 21 * 60,
-    to: 5 * 60,
-  },
-};
-
-const normalize = (value) =>
-  String(value || "")
+const upper = (value) =>
+  String(value ?? "")
     .trim()
     .toUpperCase();
 
-const isObjectId = (value) => mongoose.isValidObjectId(value);
+const escapeRegex = (value) =>
+  String(value).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// ==========================================
-// SAFE RESPONSE
-// NEVER RETURN PASSWORD
-// ==========================================
+const validId = (value) => mongoose.isValidObjectId(value);
 
-function outputTechnician(user) {
-  const item = typeof user.toObject === "function" ? user.toObject() : user;
+function send(res, status, message) {
+  return res.status(status).json({
+    success: false,
+    message,
+  });
+}
 
+function safeUser(user) {
   return {
-    _id: item._id,
-    name: item.name,
-    email: item.email,
-    phone: item.phone,
-    role: item.role,
-    department: item.department,
-    shift: item.shift,
-    status: item.status,
-    isActive: item.isActive,
-    currentJobs: item.currentJobs,
-    maxJobs: item.maxJobs,
+    _id: user._id,
+    name: user.name,
+    email: user.email,
+    phone: user.phone,
+    role: user.role,
+    department: user.department,
+    shift: user.shift,
+    status: user.status,
+    isActive: user.isActive,
+    currentJobs: user.currentJobs,
+    maxJobs: user.maxJobs,
   };
 }
 
 // ==========================================
-// IST SHIFT CALCULATION
+// ADMIN CATEGORY MASTER
 // ==========================================
 
-function minutesIST(date = new Date()) {
+async function activeCategory(name) {
+  const value = String(name ?? "").trim();
+  if (!value) return null;
+
+  return Category.findOne({
+    categoryName: new RegExp(`^\\s*${escapeRegex(value)}\\s*$`, "i"),
+    department: "MAINTENANCE",
+    isActive: { $ne: false },
+    isDeleted: { $ne: true },
+  }).lean();
+}
+
+// ==========================================
+// FIND TECHNICIAN
+// ==========================================
+
+async function findTech(id) {
+  if (!validId(id)) return null;
+
+  return User.findOne({
+    _id: id,
+    role: { $in: TECH_ROLES },
+    isDeleted: { $ne: true },
+  });
+}
+
+// ==========================================
+// IST SHIFT AVAILABILITY
+// ==========================================
+
+function istMinutes(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Kolkata",
     hour: "2-digit",
@@ -79,29 +87,15 @@ function minutesIST(date = new Date()) {
     hourCycle: "h23",
   }).formatToParts(date);
 
-  const hour = Number(parts.find((part) => part.type === "hour")?.value ?? 0);
+  const hour = Number(parts.find((p) => p.type === "hour")?.value ?? 0);
 
-  const minute = Number(
-    parts.find((part) => part.type === "minute")?.value ?? 0,
-  );
+  const minute = Number(parts.find((p) => p.type === "minute")?.value ?? 0);
 
   return hour * 60 + minute;
 }
 
-function withinWindow(now, from, to) {
-  if (from <= to) {
-    return now >= from && now < to;
-  }
-
-  return now >= from || now < to;
-}
-
-// ==========================================
-// AUTOMATIC DUTY AVAILABILITY
-// ==========================================
-
-function availabilityOf(worker) {
-  if (!worker.isActive || worker.isDeleted) {
+function availabilityOf(worker, date = new Date()) {
+  if (worker.isActive === false || worker.isDeleted === true) {
     return {
       availability: "DISABLED",
       canAssignNow: false,
@@ -122,6 +116,9 @@ function availabilityOf(worker) {
     };
   }
 
+  // 24x7 is emergency on-call, not
+  // continuous scheduled work.
+
   if (worker.shift === "24x7") {
     return {
       availability: "ON_CALL",
@@ -129,18 +126,21 @@ function availabilityOf(worker) {
     };
   }
 
-  const window = SHIFT_WINDOWS[worker.shift];
+  const mins = istMinutes(date);
 
-  const onDuty = window
-    ? withinWindow(minutesIST(), window.from, window.to)
-    : false;
+  const onDuty =
+    worker.shift === "DAY"
+      ? mins >= 9 * 60 && mins < 17 * 60
+      : worker.shift === "NIGHT"
+        ? mins >= 21 * 60 || mins < 5 * 60
+        : false;
 
   return {
-    availability: !onDuty
-      ? "OFF_DUTY"
-      : worker.status === "BUSY"
+    availability: onDuty
+      ? worker.status === "BUSY"
         ? "BUSY"
-        : "ON_DUTY",
+        : "ON_DUTY"
+      : "OFF_DUTY",
 
     canAssignNow: onDuty,
   };
@@ -149,30 +149,23 @@ function availabilityOf(worker) {
 function isEmergency(complaint) {
   return (
     complaint.isEmergency === true ||
-    normalize(complaint.priority) === "EMERGENCY" ||
-    normalize(complaint.complaintType) === "EMERGENCY"
+    upper(complaint.priority) === "EMERGENCY" ||
+    upper(complaint.complaintType) === "EMERGENCY"
   );
 }
 
-// ==========================================
-// FIND EXISTING TECHNICIAN
-// ==========================================
-
-async function findTechnician(id) {
-  if (!isObjectId(id)) {
-    return null;
+async function notify(payload) {
+  try {
+    await sendNotification(payload);
+  } catch (error) {
+    console.error("TECHNICIAN NOTIFICATION ERROR:", error.message);
   }
-
-  return User.findOne({
-    _id: id,
-    role: {
-      $in: TECHNICIAN_ROLES,
-    },
-    isDeleted: {
-      $ne: true,
-    },
-  });
 }
+
+const activeComplaintQuery = (workerId) => ({
+  assignedTo: workerId,
+  status: { $nin: CLOSED },
+});
 
 // ==========================================
 // GET COMPLAINTS
@@ -183,64 +176,50 @@ exports.getComplaintsForAssignment = async (_req, res) => {
     const complaints = await Complaint.find({})
       .populate("createdBy", "name email phone")
       .populate("assignedTo", "name email phone department shift")
-      .sort({
-        createdAt: -1,
-      });
+      .sort({ createdAt: -1 });
 
-    return res.status(200).json({
+    return res.json({
       success: true,
       count: complaints.length,
       complaints,
     });
   } catch (error) {
-    console.error("GET COMPLAINTS ERROR:", error);
+    console.error("FETCH COMPLAINTS ERROR:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Failed to fetch complaints",
-    });
+    return send(res, 500, "Failed to fetch complaints");
   }
 };
 
 // ==========================================
-// GET TECHNICIANS
-// LEGACY WORKERS INCLUDED
+// GET WORKERS AND TECHNICIANS
 // ==========================================
 
 exports.getWorkers = async (_req, res) => {
   try {
-    const workers = await User.find({
-      role: {
-        $in: TECHNICIAN_ROLES,
-      },
-      isDeleted: {
-        $ne: true,
-      },
+    const records = await User.find({
+      role: { $in: TECH_ROLES },
+      isDeleted: { $ne: true },
     })
       .select(
-        "name email phone role department shift status isActive isDeleted currentJobs maxJobs designation",
+        "name email phone role department shift status isActive isDeleted currentJobs maxJobs",
       )
-      .sort({
-        name: 1,
-      })
+      .sort({ name: 1 })
       .lean();
 
-    return res.status(200).json({
+    const workers = records.map((worker) => ({
+      ...worker,
+      ...availabilityOf(worker),
+    }));
+
+    return res.json({
       success: true,
       count: workers.length,
-
-      workers: workers.map((worker) => ({
-        ...worker,
-        ...availabilityOf(worker),
-      })),
+      workers,
     });
   } catch (error) {
-    console.error("GET TECHNICIANS ERROR:", error);
+    console.error("FETCH TECHNICIANS ERROR:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Failed to fetch Technicians",
-    });
+    return send(res, 500, "Failed to fetch Technicians");
   }
 };
 
@@ -259,93 +238,70 @@ exports.createWorker = async (req, res) => {
       shift = "DAY",
     } = req.body || {};
 
-    const cleanName = String(name || "").trim();
+    const cleanName = String(name ?? "").trim();
 
-    const cleanEmail = String(email || "")
+    const cleanEmail = String(email ?? "")
       .trim()
       .toLowerCase();
 
-    const cleanPhone = String(phone || "")
-      .replace(/\s/g, "")
-      .trim();
-
-    const cleanCategory = normalize(category);
+    const cleanPhone = String(phone ?? "").replace(/\s/g, "");
 
     if (
       !cleanName ||
       !cleanEmail ||
       !cleanPhone ||
-      !cleanCategory ||
       typeof password !== "string"
     ) {
-      return res.status(400).json({
-        success: false,
-        message: "Name, email, mobile, password and category are required",
-      });
+      return send(res, 400, "Name, email, phone and password are required");
     }
 
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
-      return res.status(400).json({
-        success: false,
-        message: "Enter a valid email address",
-      });
+      return send(res, 400, "Enter a valid email address");
     }
 
     if (!/^\+?\d{10,15}$/.test(cleanPhone)) {
-      return res.status(400).json({
-        success: false,
-        message: "Enter a valid mobile number",
-      });
+      return send(res, 400, "Enter a valid phone number");
     }
 
     if (password.length < 8) {
-      return res.status(400).json({
-        success: false,
-        message: "Initial password must be at least 8 characters",
-      });
+      return send(res, 400, "Minimum 8-character password required");
     }
 
     if (!SHIFTS.includes(shift)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid duty shift",
-      });
+      return send(res, 400, "Invalid Technician shift");
     }
 
-    // EMAIL DUPLICATE
+    // Validate category against Admin Master.
+
+    const master = await activeCategory(category);
+
+    if (!master) {
+      return send(
+        res,
+        400,
+        "Select an active Admin-created Maintenance category",
+      );
+    }
 
     if (
       await User.exists({
         email: cleanEmail,
       })
     ) {
-      return res.status(409).json({
-        success: false,
-        message: "This email is already registered",
-      });
+      return send(res, 409, "Email already registered");
     }
 
-    // MOBILE DUPLICATE
-
-    const duplicate = await User.exists({
-      role: {
-        $in: TECHNICIAN_ROLES,
-      },
-      phone: cleanPhone,
-      isDeleted: {
-        $ne: true,
-      },
-    });
-
-    if (duplicate) {
-      return res.status(409).json({
-        success: false,
-        message: "A Technician with this mobile number already exists",
-      });
+    if (
+      await User.exists({
+        role: { $in: TECH_ROLES },
+        phone: cleanPhone,
+        isDeleted: { $ne: true },
+      })
+    ) {
+      return send(res, 409, "Technician with this phone already exists");
     }
 
-    // CREATE USER ACCOUNT
-    // User.js hashes password before save.
+    // Password is hashed by User.js.
 
     const technician = await User.create({
       name: cleanName,
@@ -354,7 +310,8 @@ exports.createWorker = async (req, res) => {
       password,
 
       role: "TECHNICIAN",
-      department: cleanCategory,
+
+      department: master.categoryName,
       designation: "Maintenance Technician",
 
       shift,
@@ -364,9 +321,13 @@ exports.createWorker = async (req, res) => {
       maxJobs: 10,
 
       isActive: true,
-      isVerified: true,
-      isApproved: true,
       isDeleted: false,
+      isApproved: true,
+
+      // Account is provisioned by an
+      // authorized Maintenance Manager.
+      // This is not proof of email ownership.
+      isVerified: true,
     });
 
     return res.status(201).json({
@@ -374,45 +335,36 @@ exports.createWorker = async (req, res) => {
       accountCreated: true,
       loginCreated: true,
 
-      message: "Technician login account created successfully",
+      message: "Technician account created successfully",
 
-      worker: outputTechnician(technician),
+      worker: safeUser(technician),
     });
   } catch (error) {
     if (error?.code === 11000) {
-      return res.status(409).json({
-        success: false,
-        message: "Email or unique identifier is already in use",
-      });
+      return send(res, 409, "Account identifier already exists");
     }
 
     console.error("CREATE TECHNICIAN ERROR:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Failed to create Technician account",
-    });
+    return send(res, 500, "Failed to create Technician");
   }
 };
 
 // ==========================================
-// ACTIVATE EXISTING LEGACY WORKER LOGIN
-// PRESERVES ORIGINAL USER ID
+// UPGRADE LEGACY WORKER LOGIN
+// PRESERVE SAME USER ID
 // ==========================================
 
 exports.activateLegacyTechnicianLogin = async (req, res) => {
   try {
     const { email, password } = req.body || {};
 
-    const cleanEmail = String(email || "")
+    const cleanEmail = String(email ?? "")
       .trim()
       .toLowerCase();
 
-    if (!isObjectId(req.params.id)) {
-      return res.status(400).json({
-        success: false,
-        message: "Invalid Technician ID",
-      });
+    if (!validId(req.params.id)) {
+      return send(res, 400, "Invalid Worker ID");
     }
 
     if (
@@ -420,44 +372,31 @@ exports.activateLegacyTechnicianLogin = async (req, res) => {
       typeof password !== "string" ||
       password.length < 8
     ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Valid email and password of at least 8 characters are required",
-      });
+      return send(
+        res,
+        400,
+        "Valid email and password (8+ characters) required",
+      );
     }
 
     const worker = await User.findOne({
       _id: req.params.id,
       role: "WORKER",
-      isDeleted: {
-        $ne: true,
-      },
+      isDeleted: { $ne: true },
     });
 
     if (!worker) {
-      return res.status(404).json({
-        success: false,
-        message: "Legacy Worker not found or already activated",
-      });
+      return send(res, 404, "Legacy Worker not found or already upgraded");
     }
 
-    const duplicate = await User.exists({
-      email: cleanEmail,
-      _id: {
-        $ne: worker._id,
-      },
-    });
-
-    if (duplicate) {
-      return res.status(409).json({
-        success: false,
-        message: "Email already in use",
-      });
+    if (
+      await User.exists({
+        email: cleanEmail,
+        _id: { $ne: worker._id },
+      })
+    ) {
+      return send(res, 409, "Email already in use");
     }
-
-    // UPGRADE SAME ACCOUNT
-    // NO NEW OBJECT ID
 
     worker.email = cleanEmail;
     worker.password = password;
@@ -468,112 +407,104 @@ exports.activateLegacyTechnicianLogin = async (req, res) => {
 
     await worker.save();
 
-    return res.status(200).json({
+    return res.json({
       success: true,
-      accountCreated: true,
 
-      message:
-        "Legacy Worker login activated; existing assignments were preserved",
+      message: "Worker upgraded to Technician; assigned complaints preserved",
 
-      worker: outputTechnician(worker),
+      worker: safeUser(worker),
     });
   } catch (error) {
     if (error?.code === 11000) {
-      return res.status(409).json({
-        success: false,
-        message: "Email already in use",
-      });
+      return send(res, 409, "Email already in use");
     }
 
-    console.error("ACTIVATE LEGACY TECHNICIAN ERROR:", error);
+    console.error("ACTIVATE WORKER LOGIN ERROR:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Could not activate Technician login",
-    });
+    return send(res, 500, "Could not activate legacy Worker login");
   }
 };
 
 // ==========================================
-// UPDATE TECHNICIAN PROFILE
+// UPDATE TECHNICIAN
 // ==========================================
 
 exports.updateWorker = async (req, res) => {
   try {
-    const worker = await findTechnician(req.params.id);
+    const worker = await findTech(req.params.id);
 
     if (!worker) {
-      return res.status(404).json({
-        success: false,
-        message: "Technician not found",
-      });
+      return send(res, 404, "Technician not found");
     }
 
     const { name, phone, category, department, shift } = req.body || {};
 
     if (name !== undefined) {
       if (!String(name).trim()) {
-        return res.status(400).json({
-          success: false,
-          message: "Name cannot be empty",
-        });
+        return send(res, 400, "Name cannot be empty");
       }
 
       worker.name = String(name).trim();
     }
 
     if (phone !== undefined) {
-      const cleanPhone = String(phone).replace(/\s/g, "").trim();
+      const cleanPhone = String(phone).replace(/\s/g, "");
 
       if (!/^\+?\d{10,15}$/.test(cleanPhone)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid mobile number",
-        });
+        return send(res, 400, "Invalid phone number");
       }
 
-      const duplicate = await User.exists({
-        _id: {
-          $ne: worker._id,
-        },
-        role: {
-          $in: TECHNICIAN_ROLES,
-        },
-        phone: cleanPhone,
-        isDeleted: {
-          $ne: true,
-        },
-      });
-
-      if (duplicate) {
-        return res.status(409).json({
-          success: false,
-          message: "Mobile number already belongs to another Technician",
-        });
+      if (
+        await User.exists({
+          _id: { $ne: worker._id },
+          phone: cleanPhone,
+          role: { $in: TECH_ROLES },
+          isDeleted: { $ne: true },
+        })
+      ) {
+        return send(
+          res,
+          409,
+          "Phone number already used by another Technician",
+        );
       }
 
       worker.phone = cleanPhone;
     }
 
-    if (category !== undefined || department !== undefined) {
-      const cleanCategory = normalize(category ?? department);
+    // Only Admin-created categories accepted.
 
-      if (!cleanCategory) {
-        return res.status(400).json({
-          success: false,
-          message: "Category cannot be empty",
-        });
+    if (category !== undefined || department !== undefined) {
+      const master = await activeCategory(category ?? department);
+
+      if (!master) {
+        return send(
+          res,
+          400,
+          "Select an active Admin-created Maintenance category",
+        );
       }
 
-      worker.department = cleanCategory;
+      if (upper(worker.department) !== upper(master.categoryName)) {
+        const openJobs = await Complaint.countDocuments(
+          activeComplaintQuery(worker._id),
+        );
+
+        if (openJobs) {
+          return send(
+            res,
+            409,
+            "Reassign or finish active jobs before changing Technician category",
+          );
+        }
+      }
+
+      worker.department = master.categoryName;
     }
 
     if (shift !== undefined) {
       if (!SHIFTS.includes(shift)) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid shift",
-        });
+        return send(res, 400, "Invalid shift");
       }
 
       worker.shift = shift;
@@ -581,222 +512,211 @@ exports.updateWorker = async (req, res) => {
 
     await worker.save();
 
-    return res.status(200).json({
+    return res.json({
       success: true,
-      message: "Technician updated successfully",
-      worker: outputTechnician(worker),
+      message: "Technician updated",
+      worker: safeUser(worker),
     });
   } catch (error) {
     console.error("UPDATE TECHNICIAN ERROR:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Failed to update Technician",
-    });
+    return send(res, 500, "Failed to update Technician");
   }
 };
 
 // ==========================================
-// MANUAL STATUS CONTROL
+// UPDATE TECHNICIAN STATUS
 // ==========================================
 
 exports.updateWorkerStatus = async (req, res) => {
   try {
-    const worker = await findTechnician(req.params.id);
+    const worker = await findTech(req.params.id);
 
     if (!worker) {
-      return res.status(404).json({
-        success: false,
-        message: "Technician not found",
-      });
+      return send(res, 404, "Technician not found");
     }
 
-    const status = normalize(req.body?.status);
+    const status = upper(req.body?.status);
 
-    if (!MANAGED_STATUSES.includes(status)) {
-      return res.status(400).json({
-        success: false,
-        message: "Allowed statuses: ACTIVE, OFFLINE, ON_LEAVE",
-      });
+    if (!MANAGER_STATUSES.includes(status)) {
+      return send(res, 400, "Allowed: ACTIVE, OFFLINE, ON_LEAVE");
     }
 
-    if (!worker.isActive && status === "ACTIVE") {
-      return res.status(400).json({
-        success: false,
-        message: "Archived accounts cannot be activated",
-      });
+    if (worker.isActive === false && status === "ACTIVE") {
+      return send(res, 409, "Disabled Technician cannot be activated here");
     }
 
     worker.status = status;
 
     await worker.save();
 
-    return res.status(200).json({
+    return res.json({
       success: true,
-      message: `Technician status changed to ${status}`,
-      worker: outputTechnician(worker),
+      message: "Technician status updated",
+      worker: safeUser(worker),
     });
   } catch (error) {
-    console.error("STATUS UPDATE ERROR:", error);
+    console.error("TECHNICIAN STATUS ERROR:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Unable to update Technician status",
-    });
+    return send(res, 500, "Failed to update Technician status");
   }
 };
 
 // ==========================================
-// SAFE SOFT DELETE
+// ARCHIVE TECHNICIAN
 // ==========================================
 
 exports.deleteWorker = async (req, res) => {
   try {
-    const worker = await findTechnician(req.params.id);
+    const worker = await findTech(req.params.id);
 
     if (!worker) {
-      return res.status(404).json({
-        success: false,
-        message: "Technician not found",
-      });
+      return send(res, 404, "Technician not found");
     }
 
-    const openJobs = await Complaint.countDocuments({
-      assignedTo: worker._id,
-      status: {
-        $in: OPEN_JOB_STATUSES,
-      },
-    });
+    const [openComplaints, openJobCards] = await Promise.all([
+      Complaint.countDocuments(activeComplaintQuery(worker._id)),
 
-    if (openJobs > 0) {
-      return res.status(409).json({
-        success: false,
-        message: `Technician has ${openJobs} active complaint(s). Reassign them before removing access.`,
-      });
+      JobCard.countDocuments({
+        assignedWorker: worker._id,
+        isCompleted: { $ne: true },
+      }),
+    ]);
+
+    if (openComplaints || openJobCards) {
+      return send(
+        res,
+        409,
+        "Technician has unfinished assignments. Reassign/finish them before archiving.",
+      );
     }
 
     worker.isActive = false;
     worker.isDeleted = true;
-
     worker.deletedAt = new Date();
     worker.deletedBy = req.user?._id || null;
-
     worker.status = "OFFLINE";
 
     await worker.save();
 
-    return res.status(200).json({
+    return res.json({
       success: true,
-      message:
-        "Technician archived and access disabled. Historical job references preserved.",
+      message: "Technician archived; history preserved",
     });
   } catch (error) {
-    console.error("DELETE TECHNICIAN ERROR:", error);
+    console.error("ARCHIVE TECHNICIAN ERROR:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Failed to archive Technician",
-    });
+    return send(res, 500, "Failed to archive Technician");
   }
 };
 
 // ==========================================
 // ASSIGN TECHNICIAN
+// SAME LOGIC FOR BOTH ASSIGNMENT ROUTES
 // ==========================================
 
 exports.assignWorker = async (req, res) => {
   try {
     const { complaintId, workerId } = req.body || {};
 
-    if (!isObjectId(complaintId) || !isObjectId(workerId)) {
-      return res.status(400).json({
-        success: false,
-        message: "Valid complaint ID and Technician ID are required",
-      });
+    if (!validId(complaintId) || !validId(workerId)) {
+      return send(res, 400, "Valid Complaint and Technician IDs required");
     }
 
     const [complaint, worker] = await Promise.all([
-      Complaint.findById(complaintId),
-      findTechnician(workerId),
+      Complaint.findById(complaintId).populate("createdBy", "name phone email"),
+      findTech(workerId),
     ]);
 
     if (!complaint) {
-      return res.status(404).json({
-        success: false,
-        message: "Complaint not found",
-      });
+      return send(res, 404, "Complaint not found");
     }
 
     if (!worker) {
-      return res.status(404).json({
-        success: false,
-        message: "Technician not found",
-      });
+      return send(res, 404, "Technician not found");
     }
 
-    if (complaint.assignedTo || complaint.workerAssigned) {
-      return res.status(409).json({
-        success: false,
-        message: "Complaint already assigned",
-      });
+    // Prevent new assignments to legacy
+    // accounts with insecure credentials.
+
+    if (worker.role !== "TECHNICIAN") {
+      return send(
+        res,
+        409,
+        "Legacy Worker must activate secure Technician login before receiving new assignments",
+      );
     }
 
-    if (!["PENDING", "REOPENED"].includes(normalize(complaint.status))) {
-      return res.status(409).json({
-        success: false,
-        message: "Complaint is not in an assignable status",
-      });
+    if (complaint.assignedTo || complaint.workerAssigned === true) {
+      return send(res, 409, "Complaint already assigned");
     }
 
-    // CATEGORY MATCH
-
-    if (normalize(worker.department) !== normalize(complaint.category)) {
-      return res.status(400).json({
-        success: false,
-        message: "Technician category does not match complaint category",
-      });
+    if (!["PENDING", "REOPENED"].includes(upper(complaint.status))) {
+      return send(res, 409, "Complaint is not eligible for assignment");
     }
 
+    // ======================================
+    // CATEGORY VALIDATION
+    // ======================================
+
+    const master = await activeCategory(complaint.category);
+
+    if (!master) {
+      return send(
+        res,
+        409,
+        `Complaint category '${complaint.category}' is not an active Admin category. Review and safely correct the legacy complaint category.`,
+      );
+    }
+
+    if (upper(worker.department) !== upper(master.categoryName)) {
+      return send(
+        res,
+        409,
+        `Category mismatch: complaint '${master.categoryName}', Technician '${worker.department}'. Use the same Admin category.`,
+      );
+    }
+
+    // ======================================
     // SHIFT AVAILABILITY
+    // ======================================
 
     const availability = availabilityOf(worker);
 
-    const allowEmergencyOnCall =
+    const emergencyOnCall =
       isEmergency(complaint) && availability.availability === "ON_CALL";
 
-    if (!availability.canAssignNow && !allowEmergencyOnCall) {
-      return res.status(409).json({
-        success: false,
-        message: `Technician is currently ${availability.availability}. Select an on-duty Technician.`,
-      });
+    if (!availability.canAssignNow && !emergencyOnCall) {
+      return send(
+        res,
+        409,
+        `Technician availability: ${availability.availability}. Choose an on-duty Technician.`,
+      );
     }
 
-    // MAX CONCURRENT JOBS
+    // ======================================
+    // JOB CAPACITY
+    // ======================================
 
-    const activeCount = await Complaint.countDocuments({
-      assignedTo: worker._id,
-      status: {
-        $in: OPEN_JOB_STATUSES,
-      },
-    });
+    const activeJobs = await Complaint.countDocuments(
+      activeComplaintQuery(worker._id),
+    );
 
-    const capacity = Number.isFinite(worker.maxJobs) ? worker.maxJobs : 10;
+    const maxJobs = Number.isInteger(worker.maxJobs) ? worker.maxJobs : 10;
 
-    if (activeCount >= capacity) {
-      return res.status(409).json({
-        success: false,
-        message: "Technician has reached maximum concurrent jobs",
-      });
+    if (activeJobs >= maxJobs) {
+      return send(res, 409, "Technician has reached job capacity");
     }
 
-    const now = new Date();
-
+    // ======================================
     // ATOMIC COMPLAINT ASSIGNMENT
+    // ======================================
 
     const assigned = await Complaint.findOneAndUpdate(
       {
         _id: complaint._id,
         assignedTo: null,
+        workerAssigned: { $ne: true },
         status: complaint.status,
       },
       {
@@ -805,7 +725,7 @@ exports.assignWorker = async (req, res) => {
           assignedBy: req.user._id,
           workerAssigned: true,
           status: "IN_PROGRESS",
-          startedAt: now,
+          startedAt: new Date(),
         },
       },
       {
@@ -815,132 +735,81 @@ exports.assignWorker = async (req, res) => {
     );
 
     if (!assigned) {
-      return res.status(409).json({
-        success: false,
-        message: "Complaint was assigned by another request",
-      });
+      return send(res, 409, "Complaint was assigned elsewhere. Refresh list.");
     }
 
-    if (worker.status !== "BUSY") {
-      await User.updateOne(
-        {
-          _id: worker._id,
+    // Preserve materialRequired,
+    // materialDecision and material history.
+    // Normal jobs remain digital.
+    // Physical Emergency JobCards are handled
+    // separately by the Emergency JobCard flow.
+
+    await User.updateOne(
+      {
+        _id: worker._id,
+        status: "ACTIVE",
+      },
+      {
+        $set: {
+          status: "BUSY",
         },
-        {
-          $set: {
-            status: "BUSY",
-          },
-        },
-      );
-    }
+      },
+    );
 
     // ======================================
-    // TEMPORARY LEGACY JOB CARD SYNC
-    // ======================================
-    // Existing Technician dashboard may rely
-    // on JobCard records.
-    // Keep this compatibility until its
-    // job-list API is migrated to Complaints.
-    // Printable JobCards must ultimately
-    // be restricted to emergencies.
-
-    try {
-      let card = await JobCard.findOne({
-        hostel: assigned.hostel,
-        category: assigned.category,
-        assignedWorker: worker._id,
-        isCompleted: false,
-        totalComplaints: {
-          $lt: 10,
-        },
-      });
-
-      const entry = {
-        serialNumber: card ? card.complaints.length + 1 : 1,
-
-        complaint: assigned._id,
-
-        roomNumber: assigned.roomNumber,
-        floor: assigned.floor,
-
-        title: assigned.title,
-        titleHindi: assigned.titleHindi,
-
-        description: assigned.description,
-        descriptionHindi: assigned.descriptionHindi,
-
-        priority: assigned.priority,
-        status: "ASSIGNED",
-        startedAt: now,
-
-        materialRequired: assigned.materialRequired || false,
-
-        materialStatus: assigned.materialRequired ? "PENDING" : "NOT_REQUIRED",
-      };
-
-      if (card) {
-        card.complaints.push(entry);
-
-        card.workerStatus = "WORKING";
-        card.status = "IN_PROGRESS";
-
-        await card.save();
-      } else {
-        await JobCard.create({
-          jobCardId: `JOB-${Date.now()}-${String(assigned._id).slice(-5)}`,
-
-          hostel: assigned.hostel,
-          block: assigned.block,
-          category: assigned.category,
-
-          assignedWorker: worker._id,
-          assignedBy: req.user._id,
-
-          status: "IN_PROGRESS",
-          workerStatus: "WORKING",
-          startedAt: now,
-
-          complaints: [entry],
-        });
-      }
-    } catch (cardError) {
-      console.error("Legacy JobCard sync failed after assignment:", cardError);
-    }
-
-    // ======================================
-    // NOTIFICATION
+    // NOTIFY TECHNICIAN
     // ======================================
 
-    try {
-      await sendNotification({
-        receiver: worker._id,
+    await notify({
+      receiver: worker._id,
+      sender: req.user._id,
+
+      title: "New Complaint Assigned",
+
+      message: `Complaint ${assigned.complaintId} has been assigned to you.`,
+
+      type: "WORKER_ASSIGN",
+      relatedComplaint: assigned._id,
+      actionUrl: "/technician/dashboard",
+    });
+
+    // ======================================
+    // NOTIFY STUDENT
+    // ======================================
+
+    if (complaint.createdBy?._id) {
+      await notify({
+        receiver: complaint.createdBy._id,
         sender: req.user._id,
 
-        title: "New Complaint Assigned",
+        title: "Technician Assigned",
 
-        message: `You have been assigned complaint ${assigned.complaintId}`,
+        message: `${worker.name} has been assigned to complaint ${assigned.complaintId}.`,
 
-        type: "WORKER_ASSIGN",
+        type: "STATUS_UPDATE",
         relatedComplaint: assigned._id,
+        actionUrl: "/dashboard",
       });
-    } catch (notificationError) {
-      console.error(
-        "Assignment saved but notification failed:",
-        notificationError,
-      );
     }
 
-    return res.status(200).json({
+    return res.json({
       success: true,
       message: "Technician assigned successfully",
-      complaint: assigned.complaintId,
+
+      complaint: {
+        _id: assigned._id,
+        complaintId: assigned.complaintId,
+        status: assigned.status,
+        assignedTo: worker._id,
+
+        materialDecision: assigned.materialDecision,
+
+        materialRequired: assigned.materialRequired,
+      },
     });
   } catch (error) {
     console.error("ASSIGN TECHNICIAN ERROR:", error);
 
-    return res.status(500).json({
-      success: false,
-      message: "Failed to assign Technician",
-    });
+    return send(res, 500, "Failed to assign Technician");
   }
 };
