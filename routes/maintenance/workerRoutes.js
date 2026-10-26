@@ -1,155 +1,92 @@
+"use strict";
+
 const express = require("express");
 
 const router = express.Router();
 
-// ==========================================
-// IMPORT CONTROLLERS
-// ==========================================
-
 const {
   getComplaintsForAssignment,
-
   getWorkers,
-
   assignWorker,
-
   createWorker,
-
+  activateLegacyTechnicianLogin,
   deleteWorker,
-
   updateWorkerStatus,
-
   updateWorker,
 } = require("../../controllers/maintenance/workerController");
 
-// ==========================================
-// IMPORT MIDDLEWARE
-// ==========================================
+const {
+  getMyJobs,
+} = require("../../controllers/maintenance/technicianSelfController");
 
 const { protect } = require("../../middleware/authMiddleware");
 
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
 // ==========================================
-// MAINTENANCE MANAGER ACCESS
+// AUTHORIZATION
 // ==========================================
 
 const managerAccess = [protect, roleMiddleware("MAINTENANCE_MANAGER")];
 
-// ==========================================
-// GET ALL COMPLAINTS
-// ==========================================
-// API:
-// GET
-// /api/maintenance/worker/complaints
-// ==========================================
-
-router.get(
-  "/complaints",
-
-  ...managerAccess,
-
-  getComplaintsForAssignment,
-);
+const technicianAccess = [protect, roleMiddleware("TECHNICIAN")];
 
 // ==========================================
-// GET ALL WORKERS
-// ==========================================
-// API:
-// GET
-// /api/maintenance/worker/workers
+// TECHNICIAN SELF-SERVICE
 // ==========================================
 
-router.get(
-  "/workers",
-
-  ...managerAccess,
-
-  getWorkers,
-);
+router.get("/my-jobs", ...technicianAccess, getMyJobs);
 
 // ==========================================
-// ASSIGN WORKER
+// MANAGER: ALL COMPLAINTS
 // ==========================================
-// API:
-// PUT
-// /api/maintenance/worker/assign-worker
+
+router.get("/complaints", ...managerAccess, getComplaintsForAssignment);
+
+// ==========================================
+// MANAGER: TECHNICIAN DIRECTORY
+// ==========================================
+
+router.get("/workers", ...managerAccess, getWorkers);
+
+// ==========================================
+// MANAGER: ASSIGN TECHNICIAN
+// ==========================================
+
+router.put("/assign-worker", ...managerAccess, assignWorker);
+
+// ==========================================
+// MANAGER: CREATE ACCOUNT
+// ==========================================
+
+router.post("/create-worker", ...managerAccess, createWorker);
+
+// ==========================================
+// MANAGER: ACTIVATE LEGACY LOGIN
 // ==========================================
 
 router.put(
-  "/assign-worker",
-
+  "/activate-login/:id",
   ...managerAccess,
-
-  assignWorker,
+  activateLegacyTechnicianLogin,
 );
 
 // ==========================================
-// CREATE WORKER
-// ==========================================
-// API:
-// POST
-// /api/maintenance/worker/create-worker
+// MANAGER: STATUS
 // ==========================================
 
-router.post(
-  "/create-worker",
-
-  ...managerAccess,
-
-  createWorker,
-);
+router.put("/update-status/:id", ...managerAccess, updateWorkerStatus);
 
 // ==========================================
-// UPDATE WORKER STATUS
-// ==========================================
-// API:
-// PUT
-// /api/maintenance/worker/update-status/:id
+// MANAGER: EDIT
 // ==========================================
 
-router.put(
-  "/update-status/:id",
-
-  ...managerAccess,
-
-  updateWorkerStatus,
-);
+router.put("/update-worker/:id", ...managerAccess, updateWorker);
 
 // ==========================================
-// UPDATE WORKER
-// ==========================================
-// API:
-// PUT
-// /api/maintenance/worker/update-worker/:id
+// MANAGER: ARCHIVE
 // ==========================================
 
-router.put(
-  "/update-worker/:id",
-
-  ...managerAccess,
-
-  updateWorker,
-);
-
-// ==========================================
-// DELETE WORKER
-// ==========================================
-// API:
-// DELETE
-// /api/maintenance/worker/delete-worker/:id
-// ==========================================
-
-router.delete(
-  "/delete-worker/:id",
-
-  ...managerAccess,
-
-  deleteWorker,
-);
-
-// ==========================================
-// EXPORT ROUTER
-// ==========================================
+router.delete("/delete-worker/:id", ...managerAccess, deleteWorker);
 
 module.exports = router;

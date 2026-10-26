@@ -1,52 +1,74 @@
+"use strict";
+
+// ==========================================
+// AMIMAINTAIN - ROLE AUTHORIZATION
+// ==========================================
+
 const roleMiddleware = (...roles) => {
+  const allowedRoles = roles
+    .flat()
+    .map((role) =>
+      String(role || "")
+        .trim()
+        .toUpperCase(),
+    )
+    .filter(Boolean);
+
   return (req, res, next) => {
     try {
-      // ======================================
-      // CHECK USER
-      // ======================================
+      // ====================================
+      // CHECK AUTHENTICATION
+      // ====================================
 
       if (!req.user) {
         return res.status(401).json({
           success: false,
-
-          message: "User not found",
+          message: "Authentication required",
         });
       }
 
-      // ======================================
-      // NORMALIZE ROLE
-      // ======================================
+      // ====================================
+      // ACCOUNT STATUS CHECK
+      // ====================================
 
-      const userRole = String(req.user.role).trim().toLowerCase();
-
-      const allowedRoles = roles.map((role) =>
-        String(role).trim().toLowerCase(),
-      );
-
-      console.log("USER ROLE:", userRole);
-
-      console.log("ALLOWED:", allowedRoles);
-
-      // ======================================
-      // ACCESS CHECK
-      // ======================================
-
-      if (!allowedRoles.includes(userRole)) {
+      if (req.user.isActive === false || req.user.isDeleted === true) {
         return res.status(403).json({
           success: false,
-
-          message: "Access Denied",
+          message: "Account disabled or archived",
         });
       }
 
-      next();
+      // ====================================
+      // NORMALIZE LOGGED-IN ROLE
+      // ====================================
+
+      const userRole = String(req.user.role || "")
+        .trim()
+        .toUpperCase();
+
+      // ====================================
+      // VERIFY PERMISSIONS
+      // ====================================
+
+      if (!userRole || !allowedRoles.includes(userRole)) {
+        return res.status(403).json({
+          success: false,
+          message:
+            "Access denied. You do not have permission to access this resource.",
+        });
+      }
+
+      // ====================================
+      // AUTHORIZED
+      // ====================================
+
+      return next();
     } catch (error) {
-      console.log("ROLE MIDDLEWARE ERROR:", error);
+      console.error("ROLE MIDDLEWARE ERROR:", error);
 
       return res.status(500).json({
         success: false,
-
-        message: "Middleware Failed",
+        message: "Authorization failed",
       });
     }
   };
