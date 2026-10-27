@@ -1,200 +1,317 @@
 "use strict";
 
 const mongoose = require("mongoose");
+
 const Hostel = require("../../models/Hostel");
 const Category = require("../../models/Category");
 
-const string = (value) => String(value ?? "").trim();
-const upper = (value) => string(value).toUpperCase();
-const idOf = (value) => string(value?._id || value?.id || value);
+// =====================================================
+// COMMON HELPERS
+// =====================================================
 
-const isActive = (item) =>
-  Boolean(item) &&
-  item.isActive !== false &&
-  item.isDeleted !== true &&
-  item.isArchived !== true &&
-  !["INACTIVE", "ARCHIVED", "DELETED"].includes(upper(item.status));
+const text = (value) => String(value ?? "").trim();
 
-const uniqueText = (values) => {
+const upper = (value) => text(value).toUpperCase();
+
+const idOf = (value) => text(value?._id || value?.id || value);
+
+const isActive = (doc) =>
+  !!doc &&
+  doc.isActive !== false &&
+  doc.isDeleted !== true &&
+  doc.isArchived !== true &&
+  !["INACTIVE", "ARCHIVED", "DELETED"].includes(upper(doc.status));
+
+const sortByName = (a, b) =>
+  a.name.localeCompare(b.name, undefined, {
+    numeric: true,
+  });
+
+// =====================================================
+// UNIQUE CATEGORY / LOCATION NAMES
+// =====================================================
+
+function uniqueNames(values) {
   const seen = new Set();
 
   return (Array.isArray(values) ? values : [])
     .map((value) =>
       typeof value === "string"
-        ? string(value)
-        : string(value?.name || value?.subCategoryName || value?.areaName),
+        ? text(value)
+        : text(
+            value?.name ||
+              value?.subCategoryName ||
+              value?.areaName ||
+              value?.label,
+          ),
     )
-    .filter((value) => {
-      const key = upper(value);
+    .filter((name) => {
+      const key = upper(name);
 
-      if (!key || seen.has(key)) return false;
+      if (!key || seen.has(key)) {
+        return false;
+      }
 
       seen.add(key);
       return true;
     });
-};
-
-// =====================================================
-// RESOLVE EXISTING ADMIN COLLECTIONS
-// =====================================================
-
-async function getCollectionByModelOrName(modelName, names) {
-  const db = mongoose.connection.db;
-
-  if (!db) {
-    throw new Error("Database is not connected");
-  }
-
-  const model = mongoose.models[modelName];
-
-  if (model?.collection?.name) {
-    return db.collection(model.collection.name);
-  }
-
-  const existing = (
-    await db.listCollections({}, { nameOnly: true }).toArray()
-  ).map(({ name }) => name);
-
-  const collectionName = names.find((name) => existing.includes(name));
-
-  return collectionName ? db.collection(collectionName) : null;
 }
 
 // =====================================================
-// SHARED ADMIN MASTER DATA
+// HOSTEL CODE SUPPORT
+//
+// NEW: hostelCode = H1
+// OLD: hostelName = Boys Hostel H1
+// =====================================================
+
+function getHostelCode(hostel) {
+  const explicit = upper(hostel.hostelCode || hostel.code);
+
+  if (explicit) {
+    return explicit;
+  }
+
+  const legacy = text(hostel.hostelName || hostel.name).match(
+    /\b(H\d+[A-Z]?)\b/i,
+  );
+
+  return legacy ? upper(legacy[1]) : "";
+}
+
+// =====================================================
+// GET ADMIN COLLECTION
+//
+// First use registered Mongoose model.
+// Otherwise locate the existing MongoDB collection.
+// =====================================================
+
+async function resolveCollection(modelName, candidates) {
+  const db = mongoose.connection.db;
+
+  if (!db) {
+    throw new Error("MongoDB is not connected");
+  }
+
+  const collections = (
+    await db.listCollections({}, { nameOnly: true }).toArray()
+  ).map((item) => item.name);
+
+  const registered = mongoose.models[modelName]?.collection?.name;
+
+  if (registered && collections.includes(registered)) {
+    return db.collection(registered);
+  }
+
+  const name = candidates.find((candidate) => collections.includes(candidate));
+
+  return name ? db.collection(name) : null;
+}
+
+// =====================================================
+// LOAD ALL ADMIN-CREATED FORM DATA
 // =====================================================
 
 async function loadComplaintFormCatalog() {
+  const db = mongoose.connection.db;
+
+  if (!db) {
+    throw new Error("MongoDB is not connected");
+  }
+
+  // ===================================================
+  // FIND ADMIN COLLECTIONS
+  // ===================================================
+
   const [blockCollection, otherCollection] = await Promise.all([
-    getCollectionByModelOrName("Block", [
+    resolveCollection("Block", [
       "blocks",
       "academicblocks",
       "buildings",
       "academicbuildings",
     ]),
 
-    getCollectionByModelOrName("OtherLocation", [
+    resolveCollection("OtherLocation", [
       "otherlocations",
       "other_locations",
       "otherlocationmasters",
     ]),
   ]);
 
-  const activeFilter = {
+  if (!blockCollection) {
+    throw new Error("Admin Academic Block collection not found");
+  }
+
+  // ===================================================
+  // ACTIVE FILTER
+  //
+  // Hostel uses same active rules as Admin:
+  // isActive != false
+  // isDeleted != true
+  // ===================================================
+
+  const activeHostelQuery = {
     isActive: { $ne: false },
     isDeleted: { $ne: true },
+  };
+
+  const activeMasterQuery = {
+    ...activeHostelQuery,
     isArchived: { $ne: true },
   };
 
-  const [hostelDocs, blockDocs, otherDocs, categoryDocs] = await Promise.all([
-    Hostel.find(activeFilter).lean(),
+  // ===================================================
+  // FETCH ALL MASTER RECORDS
+  // ===================================================
 
-    blockCollection
-      ? blockCollection.find(activeFilter).toArray()
-      : Promise.resolve([]),
+  const [hostelDocs, blockDocs, otherDocs, categoryDocs] = await Promise.all([
+    Hostel.find(activeHostelQuery)
+      .select("hostelName hostelCode hostelType totalFloors isActive isDeleted")
+      .lean(),
+
+    blockCollection.find(activeMasterQuery).toArray(),
 
     otherCollection
-      ? otherCollection.find(activeFilter).toArray()
+      ? otherCollection.find(activeMasterQuery).toArray()
       : Promise.resolve([]),
 
     Category.find({
-      ...activeFilter,
+      ...activeMasterQuery,
       department: "MAINTENANCE",
     }).lean(),
   ]);
 
-  const byName = (a, b) =>
-    a.name.localeCompare(b.name, undefined, {
-      numeric: true,
-    });
-
   // ===================================================
-  // 1. ADMIN HOSTELS
+  // 1. ADMIN-CREATED HOSTELS
   // ===================================================
 
   const hostels = hostelDocs
     .filter(isActive)
-    .map((item) => ({
-      id: idOf(item._id),
+    .map((hostel) => ({
+      id: idOf(hostel._id),
+
       type: "HOSTEL",
 
-      code: string(item.hostelCode).toUpperCase(),
-      name: string(item.hostelName),
+      code: getHostelCode(hostel),
 
-      hostelType: upper(item.hostelType),
-      totalFloors: item.totalFloors ?? null,
+      name: text(hostel.hostelName || hostel.name),
+
+      hostelType: upper(hostel.hostelType || "BOYS"),
+
+      totalFloors: hostel.totalFloors ?? null,
     }))
-    .filter((item) => item.code && item.name)
-    .sort(byName);
+
+    // Do not hide older Hostels just because
+    // hostelCode is not separately stored.
+    .filter((hostel) => hostel.id && hostel.name)
+    .sort(sortByName);
 
   // ===================================================
-  // 2. ACADEMIC BLOCKS
+  // 2. ADMIN-CREATED ACADEMIC BLOCKS
   // ===================================================
 
   const academicBlocks = blockDocs
     .filter(isActive)
-    .map((item) => ({
-      id: idOf(item._id),
+    .map((block) => ({
+      id: idOf(block._id),
+
       type: "BLOCK",
 
-      code: upper(item.code),
-      name: string(item.name),
+      code: upper(block.code || block.blockCode || block.buildingCode),
 
-      buildingType: string(item.buildingType),
-      startFloor: string(item.startFloor),
-      endFloor: string(item.endFloor),
-      roomRange: string(item.roomRange),
+      name: text(block.name || block.blockName || block.buildingName),
 
-      departments: uniqueText(item.departments),
+      departments: uniqueNames(block.departments),
+
+      startFloor: text(block.startFloor),
+
+      endFloor: text(block.endFloor),
     }))
-    .filter((item) => item.code && item.name)
-    .sort(byName);
+    .filter((block) => block.id && block.code && block.name)
+    .sort(sortByName);
 
   // ===================================================
-  // 3. OTHER LOCATIONS CREATED BY ADMIN
+  // 3. ADMIN-CREATED OTHER LOCATIONS
   // ===================================================
 
   const otherLocations = otherDocs
     .filter(isActive)
-    .map((item) => ({
-      id: idOf(item._id),
+    .map((location) => ({
+      id: idOf(location._id),
+
       type: "OTHER",
 
-      code: upper(item.code),
-      name: string(item.name),
+      code: upper(location.code || location.locationCode),
 
-      category: string(item.category),
-      areas: uniqueText(item.areas),
+      name: text(location.name || location.locationName),
+
+      category: text(location.category),
+
+      areas: uniqueNames(location.areas),
     }))
-    .filter((item) => item.code && item.name)
-    .sort(byName);
+    .filter((location) => location.id && location.name)
+    .sort(sortByName);
 
   // ===================================================
-  // 4. ADMIN MAINTENANCE CATEGORIES
+  // 4. ADMIN-CREATED MAINTENANCE CATEGORIES
   // ===================================================
 
   const categories = categoryDocs
     .filter(isActive)
-    .map((item) => ({
-      id: idOf(item._id),
+    .map((category) => ({
+      id: idOf(category._id),
 
-      name: string(item.categoryName),
-      department: "MAINTENANCE",
+      name: text(category.categoryName || category.name),
 
-      priority: ["LOW", "MEDIUM", "HIGH"].includes(upper(item.priority))
-        ? upper(item.priority)
+      priority: ["LOW", "MEDIUM", "HIGH", "URGENT"].includes(
+        upper(category.priority),
+      )
+        ? upper(category.priority)
         : "MEDIUM",
 
-      icon: string(item.icon),
-      description: string(item.description),
+      icon: text(category.icon),
 
-      subCategories: uniqueText(item.subCategories),
+      description: text(category.description),
+
+      subCategories: uniqueNames(category.subCategories),
     }))
-    .filter((item) => item.name)
-    .sort(byName);
+    .filter((category) => category.id && category.name)
+    .sort(sortByName);
 
   // ===================================================
-  // RESPONSE FOR STUDENT FORM
+  // DEBUG LOGS
+  //
+  // Useful for finding why Student cannot see Hostels.
+  // Logs only counts, not Student data.
+  // ===================================================
+
+  if (process.env.NODE_ENV !== "production") {
+    let totalHostels = null;
+
+    if (hostels.length === 0) {
+      totalHostels = await Hostel.countDocuments({});
+    }
+
+    console.log("[STUDENT COMPLAINT FORM]", {
+      database: db.databaseName,
+
+      hostelCollection: Hostel.collection.name,
+
+      activeHostelDocuments: hostelDocs.length,
+
+      hostelsReturned: hostels.length,
+
+      totalHostelsWhenEmpty: totalHostels,
+
+      academicBlocks: academicBlocks.length,
+
+      otherLocations: otherLocations.length,
+
+      categories: categories.length,
+    });
+  }
+
+  // ===================================================
+  // RETURN CONFIGURATION
   // ===================================================
 
   return {
@@ -202,18 +319,14 @@ async function loadComplaintFormCatalog() {
     academicBlocks,
     otherLocations,
     categories,
-
-    // A separate internal-location master for Hostel
-    // and Block has not been configured here.
-    locations: [],
   };
 }
 
 // =====================================================
-// STUDENT GET FORM CONFIG API
+// GET /api/student/complaint-form-config
 // =====================================================
 
-const getComplaintFormConfig = async (req, res) => {
+async function getComplaintFormConfig(req, res) {
   try {
     if (!req.user) {
       return res.status(401).json({
@@ -236,14 +349,18 @@ const getComplaintFormConfig = async (req, res) => {
       ...catalog,
     });
   } catch (error) {
-    console.error("STUDENT FORM CONFIG ERROR:", error);
+    console.error("STUDENT COMPLAINT FORM CONFIG ERROR:", error);
 
     return res.status(500).json({
       success: false,
       message: "Unable to load Admin-created complaint options",
     });
   }
-};
+}
+
+// =====================================================
+// EXPORTS
+// =====================================================
 
 module.exports = {
   getComplaintFormConfig,

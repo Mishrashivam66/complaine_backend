@@ -15,16 +15,16 @@ const { loadComplaintFormCatalog } = require("./complaintFormConfigController");
 // HELPERS
 // =====================================================
 
-const str = (value) => String(value ?? "").trim();
+const text = (value) => String(value ?? "").trim();
 
-const upper = (value) => str(value).toUpperCase();
+const upper = (value) => text(value).toUpperCase();
 
 const normalize = (value) => upper(value).replace(/[^A-Z0-9]/g, "");
 
-const currentUserId = (req) => req.user?._id || req.user?.id;
+const userId = (req) => req.user?._id || req.user?.id;
 
 // =====================================================
-// TECHNICAL TERMS
+// TECHNICAL TERMS FOR HINDI TRANSLATION
 // =====================================================
 
 const technicalTerms = {
@@ -42,84 +42,86 @@ const technicalTerms = {
 };
 
 // =====================================================
-// NOTIFICATION PRIORITY
+// NOTIFICATION HELPERS
 // =====================================================
 
-function getNotificationPriority(value) {
+const notificationPriority = (value) => {
   const priority = upper(value);
 
-  if (priority === "URGENT") return "CRITICAL";
-  if (priority === "HIGH") return "HIGH";
-  if (priority === "MEDIUM") return "MEDIUM";
+  if (priority === "URGENT") {
+    return "CRITICAL";
+  }
 
-  return "LOW";
-}
+  if (["LOW", "MEDIUM", "HIGH"].includes(priority)) {
+    return priority;
+  }
 
-async function safeSendNotification(data) {
+  return "MEDIUM";
+};
+
+async function notify(data) {
   try {
     await sendNotification(data);
   } catch (error) {
-    console.error("NOTIFICATION ERROR:", error.message);
+    console.error("COMPLAINT NOTIFICATION ERROR:", error.message);
   }
 }
 
-// =====================================================
-// STATUS NOTIFICATION MESSAGES
-// =====================================================
-
-const statusMessages = {
-  PENDING: "is currently pending.",
-
-  ASSIGNED: "has been assigned to a Technician.",
-
-  IN_PROGRESS: "repair work has started.",
-
-  WAITING_MATERIAL: "is waiting for required material.",
-
-  COMPLETED: "has been marked completed. Please verify the repair.",
-
-  RESOLVED: "has been resolved after verification.",
-
-  CLOSED: "has been closed.",
-
-  REOPENED: "has been reopened and needs further attention.",
-};
-
-function getStatusNotification(status, complaint) {
-  const key = upper(status);
-
-  const names = {
-    PENDING: "Complaint Pending",
-    ASSIGNED: "Technician Assigned",
-    IN_PROGRESS: "Work In Progress",
-    WAITING_MATERIAL: "Waiting for Material",
-    COMPLETED: "Work Completed",
-    RESOLVED: "Complaint Resolved",
-    CLOSED: "Complaint Closed",
-    REOPENED: "Complaint Reopened",
-  };
-
-  return {
-    title: names[key] || "Complaint Updated",
-
-    message: `${complaint.complaintId || "Complaint"} ${
-      statusMessages[key] || `status changed to ${key}.`
-    }`,
-  };
+function notice(
+  receiver,
+  sender,
+  complaint,
+  title,
+  message,
+  type = "COMPLAINT",
+  actionUrl = "/complaints",
+) {
+  return notify({
+    receiver,
+    sender,
+    title,
+    message,
+    type,
+    priority: notificationPriority(complaint.priority),
+    relatedComplaint: complaint._id,
+    relatedId: complaint._id,
+    relatedModel: "Complaint",
+    actionUrl,
+  });
 }
 
 // =====================================================
-// HOSTEL FLOOR AUTO-DETECTION
+// VALID COMPLAINT STATUSES
 // =====================================================
 
-function detectHostelFloor(roomNumber) {
-  const room = upper(roomNumber).replace(/\s+/g, "");
+const statuses = [
+  "PENDING",
+  "ASSIGNED",
+  "IN_PROGRESS",
+  "WAITING_MATERIAL",
+  "COMPLETED",
+  "RESOLVED",
+  "CLOSED",
+  "REOPENED",
+];
 
-  if (/^G/.test(room)) {
+// =====================================================
+// HOSTEL FLOOR AUTO DETECTION
+//
+// G    => Ground Floor
+// F    => First Floor
+// S2   => Second Floor
+// S3   => Second Floor (as per university rule)
+// =====================================================
+
+function detectFloor(roomNumber) {
+  const room = normalize(roomNumber);
+
+  if (room.startsWith("G")) {
     return "Ground Floor";
   }
 
-  if (/^F/.test(room)) {
+  if (room.startsWith("F")) {
     return "First Floor";
   }
 
@@ -131,53 +133,53 @@ function detectHostelFloor(roomNumber) {
 }
 
 // =====================================================
-// HOSTEL MATCHING
+// HOSTEL NAME NORMALIZATION
+//
+// H1
+// Hostel H1
+// Boys Hostel H1
+//
+// These should refer to the same hostel.
 // =====================================================
 
-function matchesHostel(hostel, registeredHostel) {
-  const own = normalize(registeredHostel);
+function normalizeHostel(value) {
+  const raw =
+    value && typeof value === "object"
+      ? value.hostelCode || value.hostelName || value.name || value._id || ""
+      : value;
 
-  if (!own) return false;
-
-  return [hostel.id, hostel.code, hostel.name].some((candidate) => {
-    const item = normalize(candidate);
-
-    return (
-      item === own || item.replace(/^HOSTEL/, "") === own.replace(/^HOSTEL/, "")
-    );
-  });
+  return String(raw || "")
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, "")
+    .replace(/^(BOYS|GIRLS|FACULTY|STAFF)?HOSTEL/, "");
 }
 
-// =====================================================
-// FIND LOCATION FROM ADMIN CATALOG
-// =====================================================
+function hostelMatches(hostel, registeredHostel) {
+  const studentHostel = normalizeHostel(registeredHostel);
 
-function findSelection(catalog, type, id) {
-  const groups = {
-    HOSTEL: catalog.hostels,
-    BLOCK: catalog.academicBlocks,
-    OTHER: catalog.otherLocations,
-  };
+  if (!studentHostel) {
+    return false;
+  }
 
-  return (groups[type] || []).find((item) => item.id === id) || null;
+  return [hostel.id, hostel.code, hostel.name].some(
+    (value) => normalizeHostel(value) === studentHostel,
+  );
 }
 
 // =====================================================
 // INDIAN STANDARD TIME
 // =====================================================
 
-function istNow() {
-  const values = Object.fromEntries(
+function getIST() {
+  const parts = Object.fromEntries(
     new Intl.DateTimeFormat("en-GB", {
       timeZone: "Asia/Kolkata",
-
       year: "numeric",
       month: "2-digit",
       day: "2-digit",
-
       hour: "2-digit",
       minute: "2-digit",
-
       hourCycle: "h23",
     })
       .formatToParts(new Date())
@@ -185,158 +187,175 @@ function istNow() {
   );
 
   return {
-    date: `${values.year}-${values.month}-${values.day}`,
+    date: `${parts.year}-${parts.month}-${parts.day}`,
 
-    minute: Number(values.hour) * 60 + Number(values.minute),
+    minutes: Number(parts.hour) * 60 + Number(parts.minute),
   };
 }
 
 // =====================================================
-// TIME PARSER
+// CONVERT TIME TO MINUTES
 // =====================================================
 
-function parseClock(value) {
-  const match = /^([0-1]?\d):([0-5]\d)\s*(AM|PM)$/i.exec(str(value));
+function minutesFromClock(value) {
+  const match = /^(0?[1-9]|1[0-2]):([0-5]\d)\s*(AM|PM)$/i.exec(text(value));
 
-  if (!match) return null;
-
-  const hour = Number(match[1]);
-
-  if (hour < 1 || hour > 12) {
+  if (!match) {
     return null;
   }
 
-  const hour24 = (hour % 12) + (upper(match[3]) === "PM" ? 12 : 0);
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const period = upper(match[3]);
 
-  return hour24 * 60 + Number(match[2]);
+  const hour24 = (hour % 12) + (period === "PM" ? 12 : 0);
+
+  return hour24 * 60 + minute;
 }
 
 // =====================================================
-// VALID DATE
+// VALIDATE ISO DATE
 // =====================================================
 
-function validISODate(value) {
-  const date = str(value);
+function validDay(value) {
+  const dateText = text(value);
 
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
     return false;
   }
 
-  const parsed = new Date(`${date}T00:00:00.000Z`);
+  const date = new Date(`${dateText}T00:00:00.000Z`);
 
   return (
-    !Number.isNaN(parsed.getTime()) &&
-    parsed.toISOString().slice(0, 10) === date
+    !Number.isNaN(date.getTime()) &&
+    date.toISOString().slice(0, 10) === dateText
   );
 }
 
 // =====================================================
-// VALIDATE 3 PREFERRED VISIT SLOTS
+// VALIDATE THREE PREFERRED VISIT SLOTS
+//
+// Exactly 3 slots
+// Each slot 2 hours
+// Same date
+// No duplicates
+// No past slots
 // =====================================================
 
-function validatePreferredSlots(raw) {
-  if (!Array.isArray(raw) || raw.length !== 3) {
+function validateSlots(value) {
+  if (!Array.isArray(value) || value.length !== 3) {
     return {
-      error: "Choose exactly 3 preferred visit time slots.",
+      error: "Select exactly three preferred 2-hour visit slots",
     };
   }
 
-  const now = istNow();
+  const now = getIST();
+  const used = new Set();
+  const slots = [];
 
-  const parsed = [];
-  const seen = new Set();
+  const allowedStarts = new Set([
+    540, // 09:00 AM
+    660, // 11:00 AM
+    780, // 01:00 PM
+    900, // 03:00 PM
+  ]);
 
-  for (const [index, item] of raw.entries()) {
-    const date = str(item?.date);
-    const startTime = str(item?.startTime);
-    const endTime = str(item?.endTime);
+  let sharedDate = "";
 
-    const start = parseClock(startTime);
-    const end = parseClock(endTime);
+  for (const [index, raw] of value.entries()) {
+    const date = text(raw?.date);
+    const from = text(raw?.startTime);
+    const to = text(raw?.endTime);
 
-    if (!validISODate(date) || date < now.date) {
+    const start = minutesFromClock(from);
+    const end = minutesFromClock(to);
+
+    // Validate date
+    if (
+      !validDay(date) ||
+      date < now.date ||
+      (sharedDate && sharedDate !== date)
+    ) {
       return {
-        error: "Choose a valid current or future visit date.",
+        error: "All three slots must use one valid current or future date",
       };
     }
 
-    if (start === null || end === null || end - start !== 120) {
+    sharedDate = date;
+
+    // Validate 2-hour time windows
+    if (
+      start === null ||
+      end === null ||
+      end - start !== 120 ||
+      !allowedStarts.has(start)
+    ) {
       return {
-        error: "Each preferred visit slot must be exactly 2 hours.",
+        error: "Choose valid 2-hour slots between 9 AM and 5 PM",
       };
     }
 
-    // University visit windows
-
-    if (![9 * 60, 11 * 60, 13 * 60, 15 * 60].includes(start)) {
+    // Reject started or past windows
+    if (date === now.date && start <= now.minutes) {
       return {
-        error: "Choose one of the available university visit windows.",
+        error: "A preferred slot has already started. Choose a later date",
       };
     }
 
-    if (date === now.date && start <= now.minute) {
+    const key = `${date}:${start}`;
+
+    if (used.has(key)) {
       return {
-        error: "Past or already-started time slots cannot be selected.",
+        error: "Duplicate preferred slots are not allowed",
       };
     }
 
-    const key = `${date}|${start}|${end}`;
+    used.add(key);
 
-    if (seen.has(key)) {
-      return {
-        error: "Duplicate visit slots are not allowed.",
-      };
-    }
-
-    seen.add(key);
-
-    parsed.push({
+    slots.push({
       preference: index + 1,
-
       date,
-      startTime,
-      endTime,
-
-      start,
-      end,
+      startTime: from,
+      endTime: to,
     });
   }
 
-  if (new Set(parsed.map((slot) => slot.date)).size !== 1) {
-    return {
-      error: "All three preferred slots must be on the chosen date.",
-    };
-  }
-
-  const sorted = [...parsed].sort((a, b) => a.start - b.start);
-
-  for (let i = 1; i < sorted.length; i += 1) {
-    if (sorted[i].start < sorted[i - 1].end) {
-      return {
-        error: "Preferred visit slots must not overlap.",
-      };
-    }
-  }
-
   return {
-    slots: parsed.map(({ preference, date, startTime, endTime }) => ({
-      preference,
-      date,
-      startTime,
-      endTime,
-    })),
+    slots,
   };
+}
+
+// =====================================================
+// SAFE HINDI TRANSLATION
+// =====================================================
+
+async function translateSafe(value) {
+  try {
+    const result = await translate(value, {
+      to: "hi",
+    });
+
+    return text(result);
+  } catch (error) {
+    console.warn("TRANSLATION WARNING:", error.message);
+
+    return "";
+  }
 }
 
 // =====================================================
 // CREATE COMPLAINT
 // =====================================================
 
-const createComplaint = async (req, res) => {
+async function createComplaint(req, res) {
   try {
-    const userId = currentUserId(req);
+    const creatorId = userId(req);
 
-    if (!userId) {
+    // ===============================================
+    // AUTHENTICATION
+    // ===============================================
+
+    if (!creatorId) {
       return res.status(401).json({
         success: false,
         message: "Login required",
@@ -344,10 +363,10 @@ const createComplaint = async (req, res) => {
     }
 
     // ===============================================
-    // FETCH STUDENT
+    // FETCH STUDENT PROFILE
     // ===============================================
 
-    const student = await User.findById(userId)
+    const student = await User.findById(creatorId)
       .select(
         "name role isHosteller hostel roomNumber floor block department departmentBlock",
       )
@@ -356,66 +375,60 @@ const createComplaint = async (req, res) => {
     if (!student) {
       return res.status(404).json({
         success: false,
-        message: "Student profile not found",
+        message: "Student not found",
       });
     }
 
     if (upper(student.role) !== "STUDENT") {
       return res.status(403).json({
         success: false,
-        message: "Students only",
+        message: "Student access only",
       });
     }
 
     const body = req.body || {};
 
-    const area = upper(body.complaintArea);
+    // ===============================================
+    // VALIDATE ADMIN LOCATION KEY
+    // ===============================================
 
-    if (!["HOSTEL", "DEPARTMENT", "CAMPUS"].includes(area)) {
+    const match = /^(HOSTEL|BLOCK|OTHER):([a-f\d]{24})$/i.exec(
+      text(body.locationKey),
+    );
+
+    if (!match) {
       return res.status(400).json({
         success: false,
-        message: "Invalid complaint area",
+        message: "Select an Admin-created complaint location",
+      });
+    }
+
+    const type = upper(match[1]);
+
+    const locationId = match[2].toLowerCase();
+
+    // ===============================================
+    // MAP LOCATION TO EXISTING COMPLAINT AREA
+    // ===============================================
+
+    const area =
+      type === "HOSTEL" ? "HOSTEL" : type === "BLOCK" ? "DEPARTMENT" : "CAMPUS";
+
+    if (body.complaintArea && upper(body.complaintArea) !== area) {
+      return res.status(400).json({
+        success: false,
+        message: "Complaint area does not match location",
       });
     }
 
     // ===============================================
-    // DAY SCHOLAR RESTRICTION
+    // DAY SCHOLAR HOSTEL RESTRICTION
     // ===============================================
 
-    if (!student.isHosteller && area === "HOSTEL") {
+    if (type === "HOSTEL" && student.isHosteller !== true) {
       return res.status(403).json({
         success: false,
-        message: "Day Scholars cannot register Hostel complaints",
-      });
-    }
-
-    // ===============================================
-    // BASIC VALIDATION
-    // ===============================================
-
-    const title = str(body.title);
-
-    const description = str(body.description);
-
-    const issueLocation = str(body.issueLocation);
-
-    if (
-      !title ||
-      title.length > 150 ||
-      description.length < 10 ||
-      description.length > 1500
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Provide a title (up to 150 characters) and a description (10-1500 characters)",
-      });
-    }
-
-    if (!issueLocation || issueLocation.length > 200) {
-      return res.status(400).json({
-        success: false,
-        message: "Exact issue location is required",
+        message: "Day scholars cannot submit hostel complaints",
       });
     }
 
@@ -425,8 +438,23 @@ const createComplaint = async (req, res) => {
 
     const catalog = await loadComplaintFormCatalog();
 
+    const lists = {
+      HOSTEL: catalog.hostels,
+      BLOCK: catalog.academicBlocks,
+      OTHER: catalog.otherLocations,
+    };
+
+    const place = (lists[type] || []).find((item) => item.id === locationId);
+
+    if (!place) {
+      return res.status(400).json({
+        success: false,
+        message: "Location is not active in Admin master",
+      });
+    }
+
     // ===============================================
-    // VALIDATE ADMIN CATEGORY
+    // CATEGORY FROM ADMIN
     // ===============================================
 
     const category = catalog.categories.find(
@@ -436,81 +464,71 @@ const createComplaint = async (req, res) => {
     if (!category) {
       return res.status(400).json({
         success: false,
-        message: "Please select an active Admin-created Maintenance Category",
+        message: "Select an active Admin-created maintenance category",
       });
     }
 
     // ===============================================
-    // VALIDATE 3 AVAILABLE SLOTS
+    // BASIC COMPLAINT VALIDATION
     // ===============================================
 
-    const visit = validatePreferredSlots(body.preferredVisitSlots);
+    const title = text(body.title);
+    const description = text(body.description);
+    const rawIssue = text(body.issueLocation);
 
-    if (visit.error) {
+    if (
+      !title ||
+      title.length > 150 ||
+      description.length < 10 ||
+      description.length > 1500 ||
+      !rawIssue ||
+      rawIssue.length > 200
+    ) {
       return res.status(400).json({
         success: false,
-        message: visit.error,
+        message:
+          "Title, description (10–1500 characters) and issue location are required",
+      });
+    }
+
+    const subCategory = text(body.subCategory || title);
+
+    if (subCategory.length > 150) {
+      return res.status(400).json({
+        success: false,
+        message: "Subcategory is too long",
       });
     }
 
     // ===============================================
-    // VALIDATE LOCATION FROM ADMIN MASTER
+    // VALIDATE 3 VISIT SLOTS
     // ===============================================
 
-    let selected = null;
+    const slotResult = validateSlots(body.preferredVisitSlots);
 
-    const selectionKey = str(body.locationKey);
-
-    if (selectionKey) {
-      const match = /^(HOSTEL|BLOCK|OTHER):([a-f0-9]{24})$/i.exec(selectionKey);
-
-      if (!match) {
-        return res.status(400).json({
-          success: false,
-          message: "Invalid selected location",
-        });
-      }
-
-      selected = findSelection(
-        catalog,
-        upper(match[1]),
-        match[2].toLowerCase(),
-      );
-
-      if (!selected) {
-        return res.status(400).json({
-          success: false,
-          message: "Selected Admin location is unavailable or archived",
-        });
-      }
+    if (slotResult.error) {
+      return res.status(400).json({
+        success: false,
+        message: slotResult.error,
+      });
     }
 
     // ===============================================
-    // BUILD SAFE COMPLAINT DATA
+    // SAFE COMPLAINT DATA
     // ===============================================
 
-    const complaintData = {
+    const data = {
       title,
       description,
+      subCategory,
 
       category: category.name,
 
-      subCategory: str(body.subCategory || title).slice(0, 150),
-
-      // Admin controls the priority
+      // Priority always comes from Admin
       priority: category.priority,
 
       complaintArea: area,
-      issueLocation,
-
-      preferredVisitSlots: visit.slots,
-
-      // Backward compatibility
-      // This is a preferred time, not
-      // a confirmed appointment.
-      availableFrom: visit.slots[0].startTime,
-
-      availableTo: visit.slots[0].endTime,
+      issueLocation: rawIssue,
 
       hostel: "",
       block: "",
@@ -518,116 +536,83 @@ const createComplaint = async (req, res) => {
       floor: "",
       assignedDepartment: "",
 
-      image: typeof body.image === "string" ? body.image : "",
+      preferredVisitSlots: slotResult.slots,
+
+      // Legacy fields for older pages
+      availableFrom: slotResult.slots[0].startTime,
+
+      availableTo: slotResult.slots[0].endTime,
     };
 
     // ===============================================
     // HOSTEL COMPLAINT
     // ===============================================
 
-    if (area === "HOSTEL") {
-      const hostel =
-        selected ||
-        catalog.hostels.find((item) => matchesHostel(item, student.hostel));
-
-      if (
-        !hostel ||
-        hostel.type !== "HOSTEL" ||
-        !matchesHostel(hostel, student.hostel)
-      ) {
+    if (type === "HOSTEL") {
+      if (!hostelMatches(place, student.hostel)) {
         return res.status(403).json({
           success: false,
-          message: "Only your registered, active Hostel can be selected",
+          message: "Only your registered Hostel can be selected",
         });
       }
 
-      const room = str(student.roomNumber);
-
-      if (!room) {
+      if (!text(student.roomNumber)) {
         return res.status(400).json({
           success: false,
-          message: "Room number is missing from your Student Profile",
+          message: "Your Student profile has no room number",
         });
       }
 
-      complaintData.hostel = str(student.hostel) || hostel.name;
+      data.hostel = text(student.hostel);
 
-      complaintData.roomNumber = room;
+      data.roomNumber = text(student.roomNumber);
 
-      complaintData.floor = detectHostelFloor(room) || str(student.floor);
+      data.floor = detectFloor(student.roomNumber) || text(student.floor);
 
-      complaintData.block = str(student.block);
+      data.block = text(student.block);
     }
 
     // ===============================================
     // ACADEMIC BLOCK COMPLAINT
     // ===============================================
-    else if (area === "DEPARTMENT") {
-      const rawBlock = normalize(body.block).replace(/^BLOCK/, "");
+    else if (type === "BLOCK") {
+      data.block = place.code;
 
-      const block =
-        selected ||
-        catalog.academicBlocks.find(
-          (item) =>
-            normalize(item.code) === rawBlock ||
-            normalize(item.name) === normalize(body.block),
-        );
-
-      if (!block || block.type !== "BLOCK") {
-        return res.status(400).json({
-          success: false,
-          message: "Select an active Academic Block created by Admin",
-        });
-      }
-
-      complaintData.block = block.code;
-
-      complaintData.assignedDepartment =
+      data.assignedDepartment =
         typeof student.department === "string"
-          ? student.department
-          : str(student.department?.departmentName || student.department?.name);
+          ? text(student.department)
+          : text(
+              student.department?.departmentName || student.department?.name,
+            );
     }
 
     // ===============================================
-    // ADMIN OTHER LOCATION COMPLAINT
+    // OTHER LOCATION COMPLAINT
     // ===============================================
-    else if (area === "CAMPUS") {
-      const other =
-        selected ||
-        catalog.otherLocations.find((item) =>
-          normalize(issueLocation).startsWith(normalize(item.name)),
-        );
+    else {
+      if (Array.isArray(place.areas) && place.areas.length) {
+        const prefix = `${place.name} - `;
 
-      if (!other || other.type !== "OTHER") {
-        return res.status(400).json({
-          success: false,
-          message: "Select an active Other Location created by Admin",
-        });
-      }
-
-      if (other.areas.length > 0) {
-        const prefix = `${other.name} - `;
-
-        const given = issueLocation
+        const selectedArea = rawIssue
           .toLowerCase()
           .startsWith(prefix.toLowerCase())
-          ? issueLocation.slice(prefix.length)
-          : issueLocation;
+          ? rawIssue.slice(prefix.length).trim()
+          : rawIssue;
 
-        const known = other.areas.find(
-          (item) => normalize(item) === normalize(given),
+        const validArea = place.areas.find(
+          (name) => normalize(name) === normalize(selectedArea),
         );
 
-        if (!known) {
+        if (!validArea) {
           return res.status(400).json({
             success: false,
-            message: "Select an Admin-created area inside the Other Location",
+            message: "Select the area created by Admin inside this location",
           });
         }
 
-        complaintData.issueLocation = `${other.name} - ${known}`;
+        data.issueLocation = `${place.name} - ${validArea}`;
       } else {
-        complaintData.issueLocation = other.name;
+        data.issueLocation = place.name;
       }
     }
 
@@ -635,58 +620,37 @@ const createComplaint = async (req, res) => {
     // HINDI AUTO TRANSLATION
     // ===============================================
 
-    let titleHindi = "";
-    let descriptionHindi = "";
-
-    const results = await Promise.allSettled([
-      translate(title, {
-        to: "hi",
-      }),
-
-      translate(description, {
-        to: "hi",
-      }),
+    const [translatedTitle, translatedDescription] = await Promise.all([
+      translateSafe(title),
+      translateSafe(description),
     ]);
 
-    if (results[0].status === "fulfilled") {
-      titleHindi = str(results[0].value);
-    }
-
-    if (results[1].status === "fulfilled") {
-      descriptionHindi = str(results[1].value);
-    }
-
-    if (technicalTerms[title]) {
-      titleHindi = technicalTerms[title];
-    }
+    const term = Object.keys(technicalTerms).find(
+      (key) => upper(key) === upper(title),
+    );
 
     // ===============================================
-    // COMPLAINT DEADLINE
+    // PREPARE COMPLAINT DOCUMENT
     // ===============================================
 
-    const deadline = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const common = {
+      ...data,
 
-    // ===============================================
-    // PREPARE DATABASE DOCUMENT
-    // ===============================================
+      titleHindi: term ? technicalTerms[term] : translatedTitle,
 
-    const commonData = {
-      ...complaintData,
-
-      titleHindi,
-      descriptionHindi,
+      descriptionHindi: translatedDescription,
 
       status: "PENDING",
 
-      student: userId,
-      createdBy: userId,
+      createdBy: creatorId,
+      student: creatorId,
 
-      deadline,
+      deadline: new Date(Date.now() + 24 * 60 * 60 * 1000),
 
       statusHistory: [
         {
           status: "PENDING",
-          changedBy: userId,
+          changedBy: creatorId,
           changedAt: new Date(),
         },
       ],
@@ -698,10 +662,10 @@ const createComplaint = async (req, res) => {
 
     let complaint;
 
-    for (let tries = 0; tries < 5; tries += 1) {
+    for (let tries = 0; tries < 5; tries++) {
       try {
         complaint = await Complaint.create({
-          ...commonData,
+          ...common,
 
           complaintId: `CMP-${crypto.randomInt(100000, 1000000)}`,
         });
@@ -718,20 +682,19 @@ const createComplaint = async (req, res) => {
     // STUDENT NOTIFICATION
     // ===============================================
 
-    await safeSendNotification({
-      receiver: userId,
-      sender: userId,
+    await notify({
+      receiver: creatorId,
+      sender: creatorId,
 
       title: "Complaint Submitted",
 
       message:
-        `${complaint.complaintId} (${complaint.title}) ` +
-        "was submitted successfully. Your preferred visit " +
-        "times are awaiting Manager selection.",
+        `${complaint.complaintId} submitted. ` +
+        "The Manager will choose a visit slot.",
 
       type: "COMPLAINT",
 
-      priority: getNotificationPriority(complaint.priority),
+      priority: notificationPriority(complaint.priority),
 
       relatedComplaint: complaint._id,
 
@@ -743,50 +706,41 @@ const createComplaint = async (req, res) => {
     });
 
     // ===============================================
-    // MAINTENANCE MANAGER NOTIFICATIONS
+    // MAINTENANCE MANAGER NOTIFICATION
     // ===============================================
 
-    const managers = await User.find({
-      role: "MAINTENANCE_MANAGER",
+    try {
+      const managers = await User.find({
+        role: "MAINTENANCE_MANAGER",
+        isActive: { $ne: false },
+      }).select("_id");
 
-      isActive: {
-        $ne: false,
-      },
-    }).select("_id");
+      await Promise.allSettled(
+        managers.map((manager) =>
+          notice(
+            manager._id,
+            creatorId,
+            complaint,
 
-    await Promise.allSettled(
-      managers.map((manager) =>
-        safeSendNotification({
-          receiver: manager._id,
-          sender: userId,
+            "New Maintenance Complaint",
 
-          title: "New Maintenance Complaint",
-
-          message:
             `${student.name || "Student"} submitted ` +
-            `${complaint.complaintId}: ${complaint.title}. ` +
-            "Three visit preferences require scheduling.",
+              `${complaint.complaintId} (${title}). ` +
+              "Select a preferred visit slot.",
 
-          type: "COMPLAINT",
+            "COMPLAINT",
 
-          priority: getNotificationPriority(complaint.priority),
-
-          relatedComplaint: complaint._id,
-
-          relatedId: complaint._id,
-
-          relatedModel: "Complaint",
-
-          actionUrl: "/maintenance/dashboard",
-        }),
-      ),
-    );
+            "/maintenance/dashboard",
+          ),
+        ),
+      );
+    } catch (error) {
+      console.error("MANAGER NOTIFICATION LOOKUP:", error.message);
+    }
 
     return res.status(201).json({
       success: true,
-
       message: "Complaint submitted successfully",
-
       complaint,
     });
   } catch (error) {
@@ -794,16 +748,16 @@ const createComplaint = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Unable to submit complaint. Please retry.",
+      message: "Unable to submit complaint",
     });
   }
-};
+}
 
 // =====================================================
 // GET ALL COMPLAINTS
 // =====================================================
 
-const getAllComplaints = async (req, res) => {
+async function getAllComplaints(req, res) {
   try {
     const complaints = await Complaint.find()
       .populate("createdBy")
@@ -821,28 +775,19 @@ const getAllComplaints = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Unable to load complaints",
+      message: error.message,
     });
   }
-};
+}
 
 // =====================================================
 // GET MY COMPLAINTS
 // =====================================================
 
-const getMyComplaints = async (req, res) => {
+async function getMyComplaints(req, res) {
   try {
-    const userId = currentUserId(req);
-
-    if (!userId) {
-      return res.status(401).json({
-        success: false,
-        message: "Login required",
-      });
-    }
-
     const complaints = await Complaint.find({
-      createdBy: userId,
+      createdBy: userId(req),
     })
       .populate("assignedTo", "name email phone department status")
       .sort({
@@ -858,16 +803,16 @@ const getMyComplaints = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Unable to load complaints",
+      message: error.message,
     });
   }
-};
+}
 
 // =====================================================
-// GET SINGLE COMPLAINT
+// GET COMPLAINT BY ID
 // =====================================================
 
-const getComplaintById = async (req, res) => {
+async function getComplaintById(req, res) {
   try {
     const complaint = await Complaint.findById(req.params.id)
       .populate("createdBy")
@@ -880,9 +825,10 @@ const getComplaintById = async (req, res) => {
       });
     }
 
+    // Students can only see their own complaints
     if (
       upper(req.user?.role) === "STUDENT" &&
-      String(complaint.student) !== String(currentUserId(req))
+      text(complaint.student?._id || complaint.student) !== text(userId(req))
     ) {
       return res.status(403).json({
         success: false,
@@ -895,20 +841,20 @@ const getComplaintById = async (req, res) => {
       complaint,
     });
   } catch (error) {
-    console.error("GET COMPLAINT ERROR:", error);
+    console.error("GET COMPLAINT BY ID ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Unable to load complaint",
+      message: error.message,
     });
   }
-};
+}
 
 // =====================================================
 // UPDATE COMPLAINT STATUS
 // =====================================================
 
-const updateComplaintStatus = async (req, res) => {
+async function updateComplaintStatus(req, res) {
   try {
     const complaint = await Complaint.findById(req.params.id);
 
@@ -919,40 +865,36 @@ const updateComplaintStatus = async (req, res) => {
       });
     }
 
-    const oldStatus = complaint.status;
+    const next = upper(req.body?.status || complaint.status);
 
-    const newStatus = upper(req.body?.status || oldStatus);
-
-    const validStatuses = Complaint.schema.path("status")?.enumValues || [];
-
-    if (!validStatuses.includes(newStatus)) {
+    if (!statuses.includes(next)) {
       return res.status(400).json({
         success: false,
         message: "Invalid complaint status",
       });
     }
 
-    complaint.status = newStatus;
+    const old = complaint.status;
+
+    complaint.status = next;
 
     if (typeof req.body?.remarks === "string") {
-      complaint.remarks = str(req.body.remarks);
+      complaint.remarks = text(req.body.remarks);
     }
 
-    if (oldStatus !== newStatus) {
+    if (next !== old) {
       complaint.statusHistory.push({
-        status: newStatus,
-
+        status: next,
+        changedBy: userId(req),
         changedAt: new Date(),
-
-        changedBy: currentUserId(req),
       });
     }
 
     // ===============================================
-    // CLOSE
+    // CLOSE COMPLAINT
     // ===============================================
 
-    if (newStatus === "CLOSED" && oldStatus !== "CLOSED") {
+    if (next === "CLOSED" && old !== "CLOSED") {
       complaint.closedAt = new Date();
 
       if (complaint.assignedTo) {
@@ -974,55 +916,42 @@ const updateComplaintStatus = async (req, res) => {
     // STUDENT NOTIFICATION
     // ===============================================
 
-    if (oldStatus !== newStatus && complaint.createdBy) {
-      const notification = getStatusNotification(newStatus, complaint);
+    if (next !== old && complaint.createdBy) {
+      await notice(
+        complaint.createdBy,
+        userId(req),
+        complaint,
 
-      await safeSendNotification({
-        receiver: complaint.createdBy,
+        `Complaint ${next.replace(/_/g, " ")}`,
 
-        sender: currentUserId(req),
+        `${complaint.complaintId} status changed to ${next}.`,
 
-        title: notification.title,
-
-        message: notification.message,
-
-        type: "STATUS_UPDATE",
-
-        priority: getNotificationPriority(complaint.priority),
-
-        relatedComplaint: complaint._id,
-
-        relatedId: complaint._id,
-
-        relatedModel: "Complaint",
-
-        actionUrl: "/complaints",
-      });
+        "STATUS_UPDATE",
+      );
     }
 
     return res.status(200).json({
       success: true,
-
       message: "Complaint updated successfully",
-
       complaint,
     });
   } catch (error) {
-    console.error("UPDATE COMPLAINT ERROR:", error);
+    console.error("UPDATE COMPLAINT STATUS ERROR:", error);
 
     return res.status(500).json({
       success: false,
-      message: "Unable to update complaint",
+      message: error.message,
     });
   }
-};
+}
 
 // =====================================================
-// LEGACY ASSIGN COMPLAINT ROUTE
-// Main Technician Assignment remains in workerController.
+// ASSIGN COMPLAINT
+// Legacy route — Manager main assignment logic
+// remains in workerController.
 // =====================================================
 
-const assignComplaint = async (req, res) => {
+async function assignComplaint(req, res) {
   try {
     const complaint = await Complaint.findById(req.params.id);
 
@@ -1032,6 +961,17 @@ const assignComplaint = async (req, res) => {
         message: "Complaint not found",
       });
     }
+
+    if (complaint.assignedTo) {
+      return res.status(409).json({
+        success: false,
+        message: "Complaint already assigned; use reassignment flow",
+      });
+    }
+
+    // ===============================================
+    // FIND TECHNICIAN
+    // ===============================================
 
     const worker = await User.findById(req.body?.assignedTo);
 
@@ -1048,41 +988,39 @@ const assignComplaint = async (req, res) => {
     ) {
       return res.status(400).json({
         success: false,
-        message: "Technician is unavailable",
+        message: "Technician unavailable",
       });
     }
+
+    // ===============================================
+    // CATEGORY MATCHING
+    // ===============================================
 
     if (normalize(worker.department) !== normalize(complaint.category)) {
       return res.status(400).json({
         success: false,
-        message: "Technician category does not match complaint",
-      });
-    }
-
-    if (complaint.assignedTo) {
-      return res.status(409).json({
-        success: false,
-
-        message:
-          "Complaint is already assigned. Use the Manager reassignment flow.",
-      });
-    }
-
-    if ((worker.currentJobs || 0) >= (worker.maxJobs || 10)) {
-      return res.status(400).json({
-        success: false,
-
-        message: "Technician workload limit reached",
+        message: "Technician category mismatch",
       });
     }
 
     // ===============================================
-    // SAVE ASSIGNMENT
+    // MAX 10 ACTIVE JOBS
+    // ===============================================
+
+    if ((worker.currentJobs || 0) >= 10) {
+      return res.status(400).json({
+        success: false,
+        message: "Technician has 10 active jobs",
+      });
+    }
+
+    // ===============================================
+    // ASSIGN TECHNICIAN
     // ===============================================
 
     complaint.assignedTo = worker._id;
 
-    complaint.assignedBy = currentUserId(req);
+    complaint.assignedBy = userId(req);
 
     complaint.workerAssigned = true;
 
@@ -1090,77 +1028,52 @@ const assignComplaint = async (req, res) => {
 
     complaint.statusHistory.push({
       status: "ASSIGNED",
-
+      changedBy: userId(req),
       changedAt: new Date(),
-
-      changedBy: currentUserId(req),
     });
 
     worker.currentJobs = (worker.currentJobs || 0) + 1;
 
-    worker.status =
-      worker.currentJobs >= (worker.maxJobs || 10) ? "BUSY" : "ACTIVE";
+    worker.status = worker.currentJobs >= 10 ? "BUSY" : "ACTIVE";
 
     await worker.save();
     await complaint.save();
 
     // ===============================================
-    // TECHNICIAN AND STUDENT NOTIFICATIONS
+    // STUDENT + TECHNICIAN NOTIFICATIONS
     // ===============================================
 
     await Promise.allSettled([
-      safeSendNotification({
-        receiver: worker._id,
+      notice(
+        worker._id,
+        userId(req),
+        complaint,
 
-        sender: currentUserId(req),
+        "New Complaint Assigned",
 
-        title: "New Complaint Assigned",
+        `${complaint.complaintId} has been assigned to you.`,
 
-        message: `${complaint.complaintId} has been assigned to you.`,
+        "WORKER_ASSIGN",
 
-        type: "WORKER_ASSIGN",
+        "/technician/dashboard",
+      ),
 
-        priority: getNotificationPriority(complaint.priority),
+      notice(
+        complaint.createdBy,
+        userId(req),
+        complaint,
 
-        relatedComplaint: complaint._id,
+        "Technician Assigned",
 
-        relatedId: complaint._id,
+        `${worker.name || "Technician"} was assigned to ${complaint.complaintId}.`,
 
-        relatedModel: "Complaint",
-
-        actionUrl: "/technician/dashboard",
-      }),
-
-      safeSendNotification({
-        receiver: complaint.createdBy,
-
-        sender: currentUserId(req),
-
-        title: "Technician Assigned",
-
-        message: `${worker.name || "Technician"} has been assigned to ${
-          complaint.complaintId
-        }.`,
-
-        type: "STATUS_UPDATE",
-
-        priority: getNotificationPriority(complaint.priority),
-
-        relatedComplaint: complaint._id,
-
-        relatedId: complaint._id,
-
-        relatedModel: "Complaint",
-
-        actionUrl: "/complaints",
-      }),
+        "STATUS_UPDATE",
+      ),
     ]);
 
     return res.status(200).json({
       success: true,
-
       message: "Complaint assigned successfully",
-
       complaint,
     });
   } catch (error) {
@@ -1168,16 +1081,16 @@ const assignComplaint = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-      message: "Unable to assign complaint",
+      message: error.message,
     });
   }
-};
+}
 
 // =====================================================
 // REOPEN COMPLAINT
 // =====================================================
 
-const reopenComplaint = async (req, res) => {
+async function reopenComplaint(req, res) {
   try {
     const complaint = await Complaint.findById(req.params.id);
 
@@ -1188,26 +1101,32 @@ const reopenComplaint = async (req, res) => {
       });
     }
 
-    const reason = str(req.body?.reason);
+    // ===============================================
+    // STUDENT OWNERSHIP CHECK
+    // ===============================================
+
+    if (
+      upper(req.user?.role) === "STUDENT" &&
+      text(complaint.createdBy) !== text(userId(req))
+    ) {
+      return res.status(403).json({
+        success: false,
+        message: "Cannot reopen another student's complaint",
+      });
+    }
+
+    const reason = text(req.body?.reason);
 
     if (reason.length < 5) {
       return res.status(400).json({
         success: false,
-
-        message: "Please explain why repair is not resolved",
+        message: "Please provide a reopen reason (minimum 5 characters)",
       });
     }
 
-    if (
-      upper(req.user?.role) === "STUDENT" &&
-      String(complaint.createdBy) !== String(currentUserId(req))
-    ) {
-      return res.status(403).json({
-        success: false,
-
-        message: "You cannot reopen another student's complaint",
-      });
-    }
+    // ===============================================
+    // SAVE REOPEN DETAILS
+    // ===============================================
 
     complaint.status = "REOPENED";
 
@@ -1217,63 +1136,56 @@ const reopenComplaint = async (req, res) => {
 
     complaint.statusHistory.push({
       status: "REOPENED",
-
+      changedBy: userId(req),
       changedAt: new Date(),
-
-      changedBy: currentUserId(req),
     });
 
     await complaint.save();
 
     // ===============================================
-    // NOTIFY STUDENT, TECHNICIAN AND MANAGER
+    // NOTIFY RELEVANT USERS
     // ===============================================
-
-    const recipients = [complaint.createdBy, complaint.assignedTo].filter(
-      Boolean,
-    );
 
     const managers = await User.find({
       role: "MAINTENANCE_MANAGER",
-
-      isActive: {
-        $ne: false,
-      },
+      isActive: { $ne: false },
     }).select("_id");
 
-    recipients.push(...managers.map((manager) => manager._id));
+    const recipients = [
+      ...new Set(
+        [
+          complaint.createdBy,
+          complaint.assignedTo,
+          ...managers.map((manager) => manager._id),
+        ]
+          .filter(Boolean)
+          .map(String),
+      ),
+    ];
 
     await Promise.allSettled(
-      [...new Set(recipients.map(String))].map((receiver) =>
-        safeSendNotification({
+      recipients.map((receiver) =>
+        notice(
           receiver,
+          userId(req),
+          complaint,
 
-          sender: currentUserId(req),
+          "Complaint Reopened",
 
-          title: "Complaint Reopened",
+          `${complaint.complaintId} reopened. Reason: ${reason}`,
 
-          message: `${complaint.complaintId} was reopened. Reason: ${reason}`,
+          "REOPEN",
 
-          type: "REOPEN",
-
-          priority: getNotificationPriority(complaint.priority),
-
-          relatedComplaint: complaint._id,
-
-          relatedId: complaint._id,
-
-          relatedModel: "Complaint",
-
-          actionUrl: "/complaints",
-        }),
+          receiver === text(complaint.assignedTo)
+            ? "/technician/dashboard"
+            : "/complaints",
+        ),
       ),
     );
 
     return res.status(200).json({
       success: true,
-
       message: "Complaint reopened",
-
       complaint,
     });
   } catch (error) {
@@ -1281,17 +1193,16 @@ const reopenComplaint = async (req, res) => {
 
     return res.status(500).json({
       success: false,
-
-      message: "Unable to reopen complaint",
+      message: error.message,
     });
   }
-};
+}
 
 // =====================================================
-// GET ADMIN-CREATED CATEGORIES FOR STUDENT
+// GET ADMIN-CREATED MAINTENANCE CATEGORIES
 // =====================================================
 
-const getCategoriesForStudents = async (req, res) => {
+async function getCategoriesForStudents(req, res) {
   try {
     const categories = await Category.find({
       department: "MAINTENANCE",
@@ -1315,18 +1226,17 @@ const getCategoriesForStudents = async (req, res) => {
       categories,
     });
   } catch (error) {
-    console.error("STUDENT CATEGORIES ERROR:", error);
+    console.error("GET STUDENT CATEGORIES ERROR:", error);
 
     return res.status(500).json({
       success: false,
-
       message: "Unable to load categories",
     });
   }
-};
+}
 
 // =====================================================
-// EXPORTS — ALL EXISTING ROUTE HANDLERS PRESERVED
+// EXPORT ALL EXISTING ROUTE HANDLERS
 // =====================================================
 
 module.exports = {
