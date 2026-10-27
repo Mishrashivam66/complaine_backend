@@ -9,7 +9,9 @@ const router = express.Router();
 // =====================================================
 
 const complaintRoutes = require("./complaintRoutes");
-
+const {
+  getMyHostelWardens,
+} = require("../../controllers/student/studentHostelWardensController");
 // =====================================================
 // CONTROLLERS
 // =====================================================
@@ -96,6 +98,13 @@ router.post(
 // =====================================================
 
 router.use("/complaints", complaintRoutes);
+
+router.get(
+  "/hostel/wardens",
+  protect,
+  authorizeRoles("STUDENT"),
+  getMyHostelWardens,
+);
 
 // =====================================================
 // EXPORT
