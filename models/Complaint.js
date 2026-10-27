@@ -284,6 +284,59 @@ const complaintSchema = new mongoose.Schema(
       default: "",
     },
 
+    preferredVisitSlots: [
+      {
+        preference: {
+          type: Number,
+          min: 1,
+          max: 3,
+        },
+
+        date: {
+          type: String,
+          default: "",
+        },
+
+        startTime: {
+          type: String,
+          default: "",
+        },
+
+        endTime: {
+          type: String,
+          default: "",
+        },
+      },
+    ],
+
+    scheduledVisit: {
+      date: {
+        type: String,
+        default: "",
+      },
+
+      startTime: {
+        type: String,
+        default: "",
+      },
+
+      endTime: {
+        type: String,
+        default: "",
+      },
+
+      scheduledBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "User",
+        default: null,
+      },
+
+      scheduledAt: {
+        type: Date,
+        default: null,
+      },
+    },
+
     // ==========================================
     // IMAGE
     // ==========================================
