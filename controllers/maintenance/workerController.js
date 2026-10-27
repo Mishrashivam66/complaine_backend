@@ -115,54 +115,31 @@ function isEmergency(complaint) {
 // TECHNICIAN AVAILABILITY
 // ==========================================
 
-function availabilityOf(worker, complaint = null, date = new Date()) {
-  if (worker.isDeleted === true || worker.isActive === false) {
-    return {
-      availability: "DISABLED",
-      canScheduleAssignment: false,
-      canAssignNow: false,
-      canStartNow: false,
-    };
-  }
+function availabilityOf(worker) {
+  const role = upper(worker.role);
+  const status = upper(worker.status);
 
-  if (worker.status === "ON_LEAVE" || worker.status === "OFFLINE") {
-    return {
-      availability: worker.status,
-      canScheduleAssignment: false,
-      canAssignNow: false,
-      canStartNow: false,
-    };
-  }
+  // Disabled / archived accounts
+  const disabled = worker.isActive === false || worker.isDeleted === true;
 
-  const window = SHIFT_WINDOWS[worker.shift];
+  // Technician unavailable for new work
+  const unavailable = status === "ON_LEAVE" || status === "OFFLINE";
 
-  const onDuty = window
-    ? inWindow(istMinutes(date), window.from, window.to)
-    : false;
-
-  const emergencyOnCall =
-    worker.shift === "24x7" && complaint != null && isEmergency(complaint);
+  const canWork = role === "TECHNICIAN" && !disabled && !unavailable;
 
   return {
-    availability:
-      worker.shift === "24x7"
-        ? "ON_CALL"
-        : onDuty
-          ? worker.status === "BUSY"
-            ? "BUSY"
-            : "ON_DUTY"
-          : "OFF_DUTY",
+    availability: disabled
+      ? "DISABLED"
+      : unavailable
+        ? status
+        : status === "BUSY"
+          ? "BUSY"
+          : "AVAILABLE",
 
-    // Assignment means scheduling the job.
-    // Off-duty Technician may receive assignment.
-    // Legacy WORKER accounts cannot receive new jobs.
-    canScheduleAssignment: worker.role === "TECHNICIAN",
-
-    // Kept for compatibility with older consumers.
-    canAssignNow: onDuty,
-
-    // Actually beginning physical work is separate.
-    canStartNow: onDuty || emergencyOnCall,
+    // No Day / Night / 24x7 restrictions
+    canScheduleAssignment: canWork,
+    canAssignNow: canWork,
+    canStartNow: canWork,
   };
 }
 
