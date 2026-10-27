@@ -1,7 +1,6 @@
 "use strict";
 
 const express = require("express");
-
 const router = express.Router();
 
 const {
@@ -13,6 +12,7 @@ const {
   deleteWorker,
   updateWorkerStatus,
   updateWorker,
+  startMyWork,
 } = require("../../controllers/maintenance/workerController");
 
 const {
@@ -20,50 +20,31 @@ const {
 } = require("../../controllers/maintenance/technicianSelfController");
 
 const { protect } = require("../../middleware/authMiddleware");
-
 const roleMiddleware = require("../../middleware/roleMiddleware");
-
-// ==========================================
-// AUTHORIZATION
-// ==========================================
 
 const managerAccess = [protect, roleMiddleware("MAINTENANCE_MANAGER")];
 
 const technicianAccess = [protect, roleMiddleware("TECHNICIAN")];
 
 // ==========================================
-// TECHNICIAN SELF-SERVICE
+// TECHNICIAN OWN JOB ROUTES
 // ==========================================
 
 router.get("/my-jobs", ...technicianAccess, getMyJobs);
 
+router.put("/my-jobs/:complaintId/start", ...technicianAccess, startMyWork);
+
 // ==========================================
-// MANAGER: ALL COMPLAINTS
+// MAINTENANCE MANAGER ROUTES
 // ==========================================
 
 router.get("/complaints", ...managerAccess, getComplaintsForAssignment);
 
-// ==========================================
-// MANAGER: TECHNICIAN DIRECTORY
-// ==========================================
-
 router.get("/workers", ...managerAccess, getWorkers);
-
-// ==========================================
-// MANAGER: ASSIGN TECHNICIAN
-// ==========================================
 
 router.put("/assign-worker", ...managerAccess, assignWorker);
 
-// ==========================================
-// MANAGER: CREATE ACCOUNT
-// ==========================================
-
 router.post("/create-worker", ...managerAccess, createWorker);
-
-// ==========================================
-// MANAGER: ACTIVATE LEGACY LOGIN
-// ==========================================
 
 router.put(
   "/activate-login/:id",
@@ -71,21 +52,9 @@ router.put(
   activateLegacyTechnicianLogin,
 );
 
-// ==========================================
-// MANAGER: STATUS
-// ==========================================
-
 router.put("/update-status/:id", ...managerAccess, updateWorkerStatus);
 
-// ==========================================
-// MANAGER: EDIT
-// ==========================================
-
 router.put("/update-worker/:id", ...managerAccess, updateWorker);
-
-// ==========================================
-// MANAGER: ARCHIVE
-// ==========================================
 
 router.delete("/delete-worker/:id", ...managerAccess, deleteWorker);
 

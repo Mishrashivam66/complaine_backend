@@ -3,10 +3,10 @@
 const Complaint = require("../../models/Complaint");
 
 // ==========================================
-// GET LOGGED-IN TECHNICIAN'S JOBS
+// GET LOGGED-IN TECHNICIAN'S OWN JOBS
 // ==========================================
 
-const getMyJobs = async (req, res) => {
+exports.getMyJobs = async (req, res) => {
   try {
     const technicianId = req.user?._id || req.user?.id;
 
@@ -22,20 +22,15 @@ const getMyJobs = async (req, res) => {
     })
       .populate("createdBy", "name phone")
       .select(
-        "complaintId title description " +
-          "titleHindi descriptionHindi " +
-          "status priority category complaintType " +
-          "hostel block floor roomNumber " +
-          "materialRequired materialStatus " +
-          "createdAt startedAt completedAt " +
-          "deadline assignedAt assignedTo",
+        "complaintId title description titleHindi descriptionHindi " +
+          "status priority category complaintType isEmergency " +
+          "hostel block floor roomNumber materialRequired materialStatus " +
+          "createdAt startedAt completedAt deadline assignedAt assignedTo",
       )
-      .sort({
-        createdAt: -1,
-      })
+      .sort({ createdAt: -1 })
       .lean();
 
-    return res.status(200).json({
+    return res.json({
       success: true,
       count: complaints.length,
       complaints,
@@ -48,8 +43,4 @@ const getMyJobs = async (req, res) => {
       message: "Unable to fetch assigned complaints",
     });
   }
-};
-
-module.exports = {
-  getMyJobs,
 };
