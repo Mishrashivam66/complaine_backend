@@ -1,10 +1,11 @@
 "use strict";
 
 const express = require("express");
+
 const router = express.Router();
 
 // =====================================================
-// IMPORT COMPLAINT ROUTES
+// EXISTING COMPLAINT ROUTES
 // =====================================================
 
 const complaintRoutes = require("./complaintRoutes");
@@ -23,8 +24,12 @@ const {
   getComplaintFormConfig,
 } = require("../../controllers/student/complaintFormConfigController");
 
+const {
+  verifyComplaintByStudent,
+} = require("../../controllers/student/complaintVerificationController");
+
 // =====================================================
-// AUTHENTICATION MIDDLEWARE
+// AUTH MIDDLEWARE
 // =====================================================
 
 const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
@@ -34,22 +39,20 @@ const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 // =====================================================
 
 router.get("/", (req, res) => {
-  return res.status(200).json({
+  return res.json({
     success: true,
     message: "AMI MAINTENANCE - Student Routes Working",
   });
 });
 
 // =====================================================
-// CHANGE PASSWORD
-// Existing API preserved for compatibility
+// CHANGE PASSWORD - EXISTING ROUTE
 // =====================================================
 
 router.put("/change-password", protect, changePassword);
 
 // =====================================================
-// ADMIN-CREATED MAINTENANCE CATEGORIES
-// Student can only VIEW categories
+// FETCH ACTIVE MAINTENANCE CATEGORIES
 // =====================================================
 
 router.get(
@@ -60,16 +63,7 @@ router.get(
 );
 
 // =====================================================
-// CREATE COMPLAINT - FORM CONFIGURATION
-//
-// Fetches:
-// 1. Active Admin-created Hostels
-// 2. Active Admin-created Academic Blocks
-// 3. Active Admin-created Other Locations
-// 4. Active Admin-created Maintenance Categories
-// 5. Category subcategories and default priority
-//
-// STUDENT READ-ONLY ACCESS
+// CREATE COMPLAINT FORM CONFIGURATION
 // =====================================================
 
 router.get(
@@ -80,8 +74,25 @@ router.get(
 );
 
 // =====================================================
-// STUDENT COMPLAINT ROUTES
-// Existing complaint APIs preserved
+// STUDENT SATISFACTION VERIFICATION
+//
+// POST /api/student/complaints/:id/verify
+// =====================================================
+
+router.post(
+  "/complaints/:id/verify",
+
+  protect,
+
+  authorizeRoles("STUDENT"),
+
+  verifyComplaintByStudent,
+);
+
+// =====================================================
+// EXISTING COMPLAINT ROUTES
+//
+// Keep after verification route.
 // =====================================================
 
 router.use("/complaints", complaintRoutes);
