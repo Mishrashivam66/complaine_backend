@@ -13,6 +13,7 @@ const stockTransactionSchema = new mongoose.Schema(
       type: String,
       required: true,
       trim: true,
+      uppercase: true,
     },
 
     itemName: {
@@ -100,7 +101,9 @@ const stockTransactionSchema = new mongoose.Schema(
       trim: true,
     },
   },
-  { timestamps: true },
+  {
+    timestamps: true,
+  },
 );
 
 stockTransactionSchema.index({
