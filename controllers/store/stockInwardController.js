@@ -1,6 +1,6 @@
 const mongoose = require("mongoose");
 const crypto = require("crypto");
-const ExcelJS = require("exceljs");
+const XLSX = require("xlsx");
 
 const Inventory = require("../../models/Inventory");
 const StockInward = require("../../models/StockInward");
@@ -154,13 +154,53 @@ function cellText(cell) {
   return clean(cell.text ?? value);
 }
 
+/**
+ * Read university inventory Excel (.xlsx).
+ *
+ * Supports title rows before the column headers.
+ * The selected quantity column is ADDITIVE stock.
+ */
 async function readExcel(buffer, quantityColumn) {
-  const workbook = new ExcelJS.Workbook();
-  await workbook.xlsx.load(buffer);
+  let workbook;
 
-  const worksheet = workbook.worksheets[0];
+  try {
+    workbook = XLSX.read(buffer, {
+      type: "buffer",
+      cellDates: true,
+      cellFormula: false,
+    });
+  } catch (error) {
+    console.error("EXCEL READ ERROR:", error);
 
-  if (!worksheet) bad("Excel sheet not found");
+    const parseError = new Error(
+      "Unable to read the Excel file. Please upload a valid .xlsx workbook.",
+      { cause: error },
+    );
+
+    parseError.statusCode = 400;
+    throw parseError;
+  }
+
+  if (!workbook.SheetNames?.length) {
+    bad("No worksheet was found in the Excel file.");
+  }
+
+  const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+
+  if (!worksheet) {
+    bad("The first Excel worksheet is empty.");
+  }
+
+  const data = XLSX.utils.sheet_to_json(worksheet, {
+    header: 1,
+    defval: "",
+    blankrows: false,
+    raw: false,
+  });
+
+  if (!data.length) {
+    bad("The Excel worksheet contains no data.");
+  }
 
   const aliases = {
     itemCode: ["itemcode", "itemid"],
@@ -169,94 +209,107 @@ async function readExcel(buffer, quantityColumn) {
     category: ["categoryname", "category"],
   };
 
-  const requestedColumn = normalize(quantityColumn);
+  const selectedQuantityColumn = normalize(quantityColumn);
 
-  const allowedQuantityColumns = [
+  const allowedColumns = [
     "quantity",
     "qty",
-    "openingqty",
-    "openingquantity",
     "incoming",
     "incomingqty",
+    "openingqty",
+    "openingquantity",
     "closingqty",
     "closingquantity",
   ];
 
-  if (!allowedQuantityColumns.includes(requestedColumn)) {
-    bad("Invalid quantity column selection");
+  if (!allowedColumns.includes(selectedQuantityColumn)) {
+    bad("Invalid quantity column selection.");
   }
 
-  let headerRow = null;
+  let headerIndex = -1;
   let columns = null;
 
-  // University sheets may have blank/title rows
-  // before the actual column headers.
-  const maxHeaderRow = Math.min(worksheet.rowCount, 20);
+  // Find the header row within the first 20 rows.
+  for (let rowIndex = 0; rowIndex < Math.min(data.length, 20); rowIndex++) {
+    const row = data[rowIndex] || [];
+    const headings = {};
 
-  for (let r = 1; r <= maxHeaderRow; r++) {
-    const header = worksheet.getRow(r);
-    const names = {};
+    row.forEach((value, columnIndex) => {
+      const name = normalize(value);
 
-    header.eachCell({ includeEmpty: false }, (cell, col) => {
-      names[normalize(cellText(cell))] = col;
+      if (name) {
+        headings[name] = columnIndex;
+      }
     });
 
     const selected = {};
 
-    for (const [key, possible] of Object.entries(aliases)) {
-      selected[key] = possible.map((alias) => names[alias]).find(Boolean);
+    for (const [key, names] of Object.entries(aliases)) {
+      const match = names.find((name) => headings[name] !== undefined);
+
+      selected[key] = match === undefined ? undefined : headings[match];
     }
 
-    selected.quantity = names[requestedColumn];
+    selected.quantity = headings[selectedQuantityColumn];
 
     if (
-      selected.itemCode &&
-      selected.itemName &&
-      selected.category &&
-      selected.unit &&
-      selected.quantity
+      Object.values(selected).every((columnIndex) => columnIndex !== undefined)
     ) {
-      headerRow = r;
+      headerIndex = rowIndex;
       columns = selected;
       break;
     }
   }
 
-  if (!headerRow) {
+  if (headerIndex === -1) {
     bad(
-      "Excel headers not found. Required: Item Code, Item Description, UOM, Category Name and selected Quantity column",
+      `Required Excel columns were not found. Check Item Code, Item Description, UOM, Category Name and "${quantityColumn}".`,
     );
   }
 
   const rows = [];
 
-  for (let r = headerRow + 1; r <= worksheet.rowCount; r++) {
-    const excelRow = worksheet.getRow(r);
+  for (let rowIndex = headerIndex + 1; rowIndex < data.length; rowIndex++) {
+    const row = data[rowIndex] || [];
 
-    const itemCode = cellText(excelRow.getCell(columns.itemCode));
+    const itemCode = clean(row[columns.itemCode]).toUpperCase();
 
-    const itemName = cellText(excelRow.getCell(columns.itemName));
+    const itemName = clean(row[columns.itemName]);
 
-    // Ignore fully empty rows.
-    if (!itemCode && !itemName) continue;
+    if (!itemCode && !itemName) {
+      continue;
+    }
 
-    const rawQuantity = cellText(excelRow.getCell(columns.quantity));
+    const category = clean(row[columns.category]);
+    const unit = clean(row[columns.unit]);
 
-    // Zero quantities mean no new stock for
-    // this particular import.
+    const rawQuantity = clean(row[columns.quantity]);
+
+    // Zero or empty quantity does not add stock.
     if (rawQuantity === "" || Number(rawQuantity) === 0) {
       continue;
+    }
+
+    const parsedQuantity = Number(rawQuantity.replace(/,/g, ""));
+
+    if (!itemCode || !itemName || !category || !unit) {
+      bad(`Excel row ${rowIndex + 1}: Required item fields are missing.`);
+    }
+
+    if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
+      bad(`Excel row ${rowIndex + 1}: Invalid stock quantity.`);
     }
 
     rows.push({
       itemCode,
       itemName,
-      category: cellText(excelRow.getCell(columns.category)),
-      unit: cellText(excelRow.getCell(columns.unit)),
-      quantity: rawQuantity,
+      category,
+      unit,
+      quantity: parsedQuantity,
     });
   }
 
+  // Reuse existing duplicate and quantity validation.
   return validateRows(rows);
 }
 
@@ -566,8 +619,7 @@ exports.importExcel = async (req, res) => {
 
     const metadata = getMetadata(req.body);
 
-    const quantityColumn = clean(req.body.quantityColumn) || "Closing Qty";
-
+    const quantityColumn = clean(req.body.quantityColumn) || "Incoming";
     const rows = await readExcel(req.file.buffer, quantityColumn);
 
     // Same exact file cannot be imported again.
