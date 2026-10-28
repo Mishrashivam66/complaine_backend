@@ -2,6 +2,12 @@ const mongoose = require("mongoose");
 
 const inventorySchema = new mongoose.Schema(
   {
+    itemCode: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: undefined,
+    },
     itemName: {
       type: String,
       required: true,
