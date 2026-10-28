@@ -22,9 +22,95 @@ const validQty = (value) =>
 
 const getId = (value) => {
   if (!value) return "";
-
   return String(value._id || value);
 };
+
+// ==========================================
+// UOM NORMALIZATION
+// FIX: PIECE / PCS / NOS ARE EQUIVALENT
+// ==========================================
+
+const normalizeUnit = (value) => {
+  const unit = clean(value)
+    .toLowerCase()
+    .replace(/\./g, "")
+    .replace(/\s+/g, "");
+
+  if (!unit) return "";
+
+  const equivalentUnits = {
+    // Number of pieces
+    piece: "PCS",
+    pieces: "PCS",
+    pcs: "PCS",
+    pc: "PCS",
+    nos: "PCS",
+    no: "PCS",
+    number: "PCS",
+    numbers: "PCS",
+    each: "PCS",
+    unit: "PCS",
+    units: "PCS",
+
+    // Weight
+    kg: "KG",
+    kilogram: "KG",
+    kilograms: "KG",
+
+    gram: "G",
+    grams: "G",
+    gm: "G",
+    g: "G",
+
+    // Length
+    meter: "M",
+    meters: "M",
+    metre: "M",
+    metres: "M",
+    mtr: "M",
+    mtrs: "M",
+    m: "M",
+
+    // Liquid volume
+    litre: "L",
+    litres: "L",
+    liter: "L",
+    liters: "L",
+    ltr: "L",
+    ltrs: "L",
+    l: "L",
+
+    // Packaging
+    box: "BOX",
+    boxes: "BOX",
+
+    roll: "ROLL",
+    rolls: "ROLL",
+
+    packet: "PACKET",
+    packets: "PACKET",
+    pkt: "PACKET",
+    pkts: "PACKET",
+
+    set: "SET",
+    sets: "SET",
+
+    pair: "PAIR",
+    pairs: "PAIR",
+
+    bundle: "BUNDLE",
+    bundles: "BUNDLE",
+
+    dozen: "DOZEN",
+    dz: "DOZEN",
+  };
+
+  return equivalentUnits[unit] || unit.toUpperCase();
+};
+
+// ==========================================
+// ERROR HELPER
+// ==========================================
 
 function fail(message, statusCode = 400) {
   const error = new Error(message);
@@ -32,11 +118,25 @@ function fail(message, statusCode = 400) {
   throw error;
 }
 
+// ==========================================
+// INVENTORY STOCK STATUS
+// ==========================================
+
 function stockStatus(quantity, minimum) {
-  if (quantity <= 0) return "Out Of Stock";
-  if (quantity <= minimum) return "Low Stock";
+  if (quantity <= 0) {
+    return "Out Of Stock";
+  }
+
+  if (quantity <= minimum) {
+    return "Low Stock";
+  }
+
   return "Available";
 }
+
+// ==========================================
+// ISSUE VOUCHER NUMBER
+// ==========================================
 
 function issueVoucherNumber() {
   return (
@@ -45,10 +145,16 @@ function issueVoucherNumber() {
   );
 }
 
+// ==========================================
+// MATERIAL REQUEST STATUS
+// ==========================================
+
 function requestStatus(materials) {
   const statuses = materials.map((material) => material.status);
 
-  if (!statuses.length) return "PENDING";
+  if (!statuses.length) {
+    return "PENDING";
+  }
 
   const totalIssued = materials.reduce(
     (sum, material) => sum + Number(material.issuedQuantity || 0),
@@ -63,7 +169,9 @@ function requestStatus(materials) {
 
   const allIssued = statuses.every((status) => status === "ISSUED");
 
-  if (allIssued) return "ISSUED";
+  if (allIssued) {
+    return "ISSUED";
+  }
 
   if (totalIssued > 0) {
     return "PARTIALLY_ISSUED";
@@ -89,6 +197,10 @@ function requestStatus(materials) {
 
   return "PENDING";
 }
+
+// ==========================================
+// ERROR RESPONSE
+// ==========================================
 
 function respondError(res, error) {
   console.error("ISSUED ITEM ERROR:", error);
@@ -125,7 +237,7 @@ function respondError(res, error) {
 }
 
 // ==========================================
-// VERIFY ACTUAL RECEIVING TECHNICIAN
+// VERIFY RECEIVING TECHNICIAN
 // ==========================================
 
 async function resolveReceiver({
@@ -142,9 +254,10 @@ async function resolveReceiver({
     fail("Invalid receiver User ID.");
   }
 
-  // If the frontend has no receiverUserId,
-  // default to the assigned Technician only.
-  // Never resolve user identity by typed name.
+  // If no receiverUserId is provided,
+  // use the assigned Technician.
+  // Never identify a Technician by typed name.
+
   const verifiedId = selectedId || assignedId;
 
   if (!verifiedId || !mongoose.isValidObjectId(verifiedId)) {
@@ -166,7 +279,6 @@ async function resolveReceiver({
     fail("Selected receiver is not a Technician account.", 403);
   }
 
-  // Different schemas can use different identifiers.
   const verifiedTechnicianId = clean(
     technician.technicianId ||
       technician.workerId ||
@@ -180,9 +292,9 @@ async function resolveReceiver({
     fail("Receiving Technician account has no name.", 409);
   }
 
-  // Old issue forms send receiverName and technicianId.
-  // Reject conflicting typed identity instead of
-  // silently binding the material to someone else.
+  // Ensure the submitted name matches the
+  // verified Technician account.
+
   if (
     receiverName &&
     receiverName.toLowerCase() !== verifiedName.toLowerCase()
@@ -190,18 +302,14 @@ async function resolveReceiver({
     fail("Receiver name does not match the selected Technician account.", 409);
   }
 
+  // Validate Technician ID when available.
+
   if (
     technicianId &&
     verifiedTechnicianId &&
     technicianId.toUpperCase() !== verifiedTechnicianId.toUpperCase()
   ) {
     fail("Technician ID does not match the selected Technician account.", 409);
-  }
-
-  // If a different Technician is collecting material,
-  // explicit receiverUserId is mandatory.
-  if (assignedId && verifiedId !== assignedId && !selectedId) {
-    fail("Select the actual receiving Technician.", 400);
   }
 
   return {
@@ -212,6 +320,7 @@ async function resolveReceiver({
 }
 
 // ==========================================
+// ISSUE MATERIAL
 // POST /api/store/issued-items/issue
 // ==========================================
 
@@ -222,7 +331,8 @@ exports.issueItem = async (req, res) => {
 
   const materialItemId = clean(req.body?.materialItemId);
 
-  const quantity = Number(req.body?.quantity);
+  const rawQuantity = req.body?.quantity;
+  const quantity = Number(rawQuantity);
 
   const receiverUserId = clean(req.body?.receiverUserId);
 
@@ -238,9 +348,9 @@ exports.issueItem = async (req, res) => {
     ? Number(req.body?.expectedRetrievalQty ?? quantity)
     : 0;
 
-  // ==========================================
-  // BASIC VALIDATION
-  // ==========================================
+  // ========================================
+  // AUTHENTICATION
+  // ========================================
 
   if (!req.user?._id) {
     return res.status(401).json({
@@ -248,6 +358,10 @@ exports.issueItem = async (req, res) => {
       message: "Authentication required.",
     });
   }
+
+  // ========================================
+  // REQUEST VALIDATION
+  // ========================================
 
   if (
     !mongoose.isValidObjectId(materialRequestId) ||
@@ -259,7 +373,12 @@ exports.issueItem = async (req, res) => {
     });
   }
 
-  if (!validQty(quantity)) {
+  if (
+    rawQuantity === undefined ||
+    rawQuantity === null ||
+    String(rawQuantity).trim() === "" ||
+    !validQty(quantity)
+  ) {
     return res.status(400).json({
       success: false,
       message: "Enter a valid issue quantity.",
@@ -277,15 +396,19 @@ exports.issueItem = async (req, res) => {
     });
   }
 
+  // ========================================
+  // DATABASE TRANSACTION
+  // ========================================
+
   const session = await mongoose.startSession();
 
   try {
     let result = null;
 
     await session.withTransaction(async () => {
-      // ======================================
-      // MATERIAL REQUEST
-      // ======================================
+      // ====================================
+      // FETCH MATERIAL REQUEST
+      // ====================================
 
       const request =
         await MaterialRequest.findById(materialRequestId).session(session);
@@ -299,6 +422,10 @@ exports.issueItem = async (req, res) => {
       if (!material) {
         fail("Requested material not found.", 404);
       }
+
+      // ====================================
+      // CHECK APPROVAL STATUS
+      // ====================================
 
       if (!["APPROVED", "PARTIALLY_ISSUED"].includes(material.status)) {
         fail("Material must be approved before issue.", 409);
@@ -318,9 +445,9 @@ exports.issueItem = async (req, res) => {
         fail(`Only ${remaining} approved units remain to be issued.`, 409);
       }
 
-      // ======================================
-      // VERIFY RECEIVER
-      // ======================================
+      // ====================================
+      // VERIFY TECHNICIAN
+      // ====================================
 
       const assignedWorkerId = getId(request.assignedWorker);
 
@@ -332,19 +459,35 @@ exports.issueItem = async (req, res) => {
         session,
       });
 
-      // ======================================
+      // ====================================
       // INVENTORY MATCH
-      // ======================================
+      // ====================================
 
-      const matching = await Inventory.find({
-        itemName: material.itemName,
-        isActive: { $ne: false },
-      })
-        .collation({
-          locale: "en",
-          strength: 2,
+      // Prefer exact Item Code when the
+      // material request contains one.
+      // Otherwise match by item name and
+      // reject ambiguous results.
+
+      const requestItemCode = clean(material.itemCode).toUpperCase();
+
+      let matching;
+
+      if (requestItemCode) {
+        matching = await Inventory.find({
+          itemCode: requestItemCode,
+          isActive: { $ne: false },
+        }).session(session);
+      } else {
+        matching = await Inventory.find({
+          itemName: material.itemName,
+          isActive: { $ne: false },
         })
-        .session(session);
+          .collation({
+            locale: "en",
+            strength: 2,
+          })
+          .session(session);
+      }
 
       if (!matching.length) {
         fail(`Inventory item "${material.itemName}" not found.`, 404);
@@ -352,27 +495,35 @@ exports.issueItem = async (req, res) => {
 
       if (matching.length > 1) {
         fail(
-          "Multiple inventory items have the same name. Item Code mapping is required before issue.",
+          "Multiple inventory records match this material. Exact Item Code mapping is required.",
           409,
         );
       }
 
       const inventory = matching[0];
 
-      const requestedUnit = clean(material.unit).toLowerCase();
+      // ====================================
+      // FIXED: UOM NORMALIZATION
+      // ====================================
 
-      const inventoryUnit = clean(inventory.unit).toLowerCase();
+      const requestedUnit = normalizeUnit(material.unit);
 
-      if (requestedUnit && inventoryUnit && requestedUnit !== inventoryUnit) {
+      const inventoryUnit = normalizeUnit(inventory.unit);
+
+      if (!requestedUnit || !inventoryUnit || requestedUnit !== inventoryUnit) {
         fail(
           `UOM mismatch. Request: ${material.unit}, Inventory: ${inventory.unit}.`,
           409,
         );
       }
 
-      // ======================================
-      // ATOMIC STOCK DEDUCTION
-      // ======================================
+      // PIECE = PCS = NOS.
+      // Different units such as KG and PCS
+      // remain incompatible.
+
+      // ====================================
+      // INVENTORY STOCK CHECK
+      // ====================================
 
       const before = round(inventory.currentStock || 0);
 
@@ -382,6 +533,10 @@ exports.issueItem = async (req, res) => {
           409,
         );
       }
+
+      // ====================================
+      // ATOMIC STOCK DEDUCTION
+      // ====================================
 
       const updatedInventory = await Inventory.findOneAndUpdate(
         {
@@ -410,8 +565,14 @@ exports.issueItem = async (req, res) => {
 
       const after = round(updatedInventory.currentStock);
 
+      // ====================================
+      // UPDATE STOCK STATUS
+      // ====================================
+
       await Inventory.updateOne(
-        { _id: updatedInventory._id },
+        {
+          _id: updatedInventory._id,
+        },
         {
           $set: {
             status: stockStatus(
@@ -423,9 +584,9 @@ exports.issueItem = async (req, res) => {
         { session },
       );
 
-      // ======================================
+      // ====================================
       // UPDATE MATERIAL REQUEST
-      // ======================================
+      // ====================================
 
       material.issuedQuantity = round(alreadyIssued + quantity);
 
@@ -440,9 +601,9 @@ exports.issueItem = async (req, res) => {
 
       request.issuedAt = new Date();
 
-      // ======================================
-      // CREATE ISSUE VOUCHER
-      // ======================================
+      // ====================================
+      // GENERATE ISSUE VOUCHER
+      // ====================================
 
       const voucherNo = issueVoucherNumber();
 
@@ -452,9 +613,9 @@ exports.issueItem = async (req, res) => {
 
       await request.save({ session });
 
-      // ======================================
-      // CREATE ISSUED ITEM
-      // ======================================
+      // ====================================
+      // CREATE ISSUED ITEM RECORD
+      // ====================================
 
       const [issuedItem] = await IssuedItem.create(
         [
@@ -473,6 +634,7 @@ exports.issueItem = async (req, res) => {
 
             item: inventory.itemName,
 
+            // Save actual inventory UOM
             unit: inventory.unit,
 
             quantity,
@@ -481,7 +643,7 @@ exports.issueItem = async (req, res) => {
 
             block: request.block || "",
 
-            // Verified receiver identity
+            // Verified receiver
             issuedTo: receiver.name,
 
             assignedTechnician: request.assignedWorker || null,
@@ -504,7 +666,7 @@ exports.issueItem = async (req, res) => {
 
             remarks,
 
-            // Technician must confirm separately
+            // Technician confirmation
             receivingStatus: "AWAITING_CONFIRMATION",
 
             receivedQuantity: 0,
@@ -515,7 +677,7 @@ exports.issueItem = async (req, res) => {
 
             receivingRemarks: "",
 
-            // Old damaged material tracking
+            // Old material retrieval
             retrievalRequired,
 
             expectedRetrievalQty,
@@ -530,9 +692,9 @@ exports.issueItem = async (req, res) => {
         { session },
       );
 
-      // ======================================
-      // STOCK TRANSACTION LEDGER
-      // ======================================
+      // ====================================
+      // STOCK TRANSACTION HISTORY
+      // ====================================
 
       await StockTransaction.create(
         [
@@ -569,9 +731,9 @@ exports.issueItem = async (req, res) => {
         { session },
       );
 
-      // ======================================
-      // RESULT
-      // ======================================
+      // ====================================
+      // FINAL RESPONSE
+      // ====================================
 
       result = {
         issuedItem,
@@ -586,7 +748,9 @@ exports.issueItem = async (req, res) => {
 
         receiver: {
           userId: receiver.userId,
+
           name: receiver.name,
+
           technicianId: receiver.technicianId,
         },
 
@@ -612,6 +776,7 @@ exports.issueItem = async (req, res) => {
 };
 
 // ==========================================
+// GET ALL ISSUED ITEMS
 // GET /api/store/issued-items/all
 // ==========================================
 
@@ -620,8 +785,14 @@ exports.getIssuedItems = async (req, res) => {
     const issuedItems = await IssuedItem.find()
       .populate("materialRequest", "requestId status materials")
       .populate("complaint", "complaintId title hostel block roomNumber")
-      .populate("assignedTechnician", "name phone technicianId")
-      .populate("receivedByTechnician", "name phone technicianId")
+      .populate(
+        "assignedTechnician",
+        "name phone technicianId workerId employeeId",
+      )
+      .populate(
+        "receivedByTechnician",
+        "name phone technicianId workerId employeeId",
+      )
       .populate("issuedBy", "name")
       .sort({
         createdAt: -1,
@@ -663,7 +834,7 @@ exports.getIssuedItems = async (req, res) => {
 };
 
 // ==========================================
-// DELIVERED STATUS
+// MARK DELIVERED
 // PUT /api/store/issued-items/deliver/:id
 // ==========================================
 
@@ -704,10 +875,13 @@ exports.markDelivered = async (req, res) => {
 };
 
 // ==========================================
-// LEGACY EXPORTS
+// LEGACY EXPORT COMPATIBILITY
 // ==========================================
 
 exports.createIssuedItem = exports.issueItem;
+
 exports.getAllIssuedItems = exports.getIssuedItems;
+
 exports.updateIssuedItemStatus = exports.markDelivered;
+
 exports.updateDeliveryStatus = exports.markDelivered;
