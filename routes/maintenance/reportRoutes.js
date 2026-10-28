@@ -1,5 +1,6 @@
-const express = require("express");
+"use strict";
 
+const express = require("express");
 const router = express.Router();
 
 const {
@@ -10,30 +11,23 @@ const {
 } = require("../../controllers/maintenance/reportController");
 
 const { protect } = require("../../middleware/authMiddleware");
-
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
-router.get("/", protect, roleMiddleware("MAINTENANCE_MANAGER"), getReports);
+// All report endpoints require Maintenance Manager login.
 
-router.get(
-  "/export/pdf",
-  protect,
-  roleMiddleware("MAINTENANCE_MANAGER"),
-  exportPDFReport,
-);
+router.use(protect);
+router.use(roleMiddleware("MAINTENANCE_MANAGER"));
 
-router.get(
-  "/export/excel",
-  protect,
-  roleMiddleware("MAINTENANCE_MANAGER"),
-  exportExcelReport,
-);
+// Dashboard report and analytics
+router.get("/", getReports);
 
-router.get(
-  "/export/csv",
-  protect,
-  roleMiddleware("MAINTENANCE_MANAGER"),
-  exportCSVReport,
-);
+// Professional PDF report
+router.get("/export/pdf", exportPDFReport);
+
+// Detailed Excel workbook
+router.get("/export/excel", exportExcelReport);
+
+// CSV report
+router.get("/export/csv", exportCSVReport);
 
 module.exports = router;
