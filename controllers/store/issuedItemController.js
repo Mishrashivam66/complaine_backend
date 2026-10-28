@@ -502,6 +502,15 @@ exports.issueItem = async (req, res) => {
 
       const inventory = matching[0];
 
+      const inventoryItemCode = clean(inventory.itemCode).toUpperCase();
+
+      if (!inventoryItemCode) {
+        fail(
+          `Inventory item "${inventory.itemName}" has no Item Code. ` +
+            "Assign a valid unique Item Code before issuing material.",
+          409,
+        );
+      }
       // ====================================
       // FIXED: UOM NORMALIZATION
       // ====================================
@@ -630,7 +639,7 @@ exports.issueItem = async (req, res) => {
 
             inventoryItem: inventory._id,
 
-            itemCode: inventory.itemCode || "",
+            itemCode: inventoryItemCode,
 
             item: inventory.itemName,
 
