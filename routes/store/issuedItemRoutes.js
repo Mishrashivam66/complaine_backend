@@ -1,28 +1,18 @@
 const express = require("express");
 const router = express.Router();
 
-const { protect } = require("../../middleware/authMiddleware");
-const roleMiddleware = require("../../middleware/roleMiddleware");
-
 const {
   issueItem,
   getIssuedItems,
-  updateIssuedStatus,
+  markDelivered,
 } = require("../../controllers/store/issuedItemController");
 
-router.use(protect);
+// These endpoints should be mounted behind the
+// existing protect + STORE_MANAGER middleware
+// in storeRoutes.js.
 
-// Issue material and deduct stock
-router.post("/issue", roleMiddleware("STORE_MANAGER"), issueItem);
-
-// View issue history
-router.get(
-  "/all",
-  roleMiddleware("STORE_MANAGER", "MAINTENANCE_MANAGER"),
-  getIssuedItems,
-);
-
-// Confirm delivery
-router.put("/deliver/:id", roleMiddleware("STORE_MANAGER"), updateIssuedStatus);
+router.post("/issue", issueItem);
+router.get("/all", getIssuedItems);
+router.put("/deliver/:id", markDelivered);
 
 module.exports = router;

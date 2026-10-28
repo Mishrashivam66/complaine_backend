@@ -12,7 +12,7 @@ const lowStockRoutes = require("./lowStockRoutes");
 const requestRoutes = require("./requestRoutes");
 const issuedItemRoutes = require("./issuedItemRoutes");
 const damagedItemRoutes = require("./damagedItemRoutes");
-
+const retrievedItemRoutes = require("./retrievedItemRoutes");
 // NEW: Stock Inward & Excel Import
 const stockInwardRoutes = require("./stockInwardRoutes");
 
@@ -30,6 +30,8 @@ router.use("/dashboard", roleMiddleware("STORE_MANAGER"), dashboardRoutes);
 // ==========================================
 
 router.use("/inventory", roleMiddleware("STORE_MANAGER"), inventoryRoutes);
+// must cover this route as well.
+router.use("/retrieved-items", retrievedItemRoutes);
 
 router.use(
   "/add-inventory",
