@@ -661,6 +661,11 @@ exports.exportExcelReport = async (req, res) => {
 // PROFESSIONAL COMPACT PDF
 // =======================================================
 
+/* ==========================================================
+   AMI MAINTENANCE — PROFESSIONAL PDF EXPORT
+   Manual Pagination | Compact Report | No Empty Pages
+   ========================================================== */
+
 exports.exportPDFReport = async (req, res) => {
   try {
     const data = await loadData(req);
@@ -669,311 +674,403 @@ exports.exportPDFReport = async (req, res) => {
     const doc = new PDFDocument({
       size: "A4",
       layout: "landscape",
-      margins: {
-        top: 40,
-        bottom: 42,
-        left: 34,
-        right: 34,
-      },
-      bufferPages: true,
       autoFirstPage: false,
+      bufferPages: true,
+      compress: true,
+      margin: 0,
     });
 
-    const PAGE_WIDTH = 841.89;
-    const PAGE_HEIGHT = 595.28;
+    const PAGE_W = 841.89;
+    const PAGE_H = 595.28;
+
     const LEFT = 34;
-    const RIGHT = PAGE_WIDTH - 34;
-    const CONTENT_WIDTH = RIGHT - LEFT;
+    const RIGHT = 34;
+    const TOP = 76;
+    const BOTTOM = 54;
 
-    const columns = [
-      { key: "id", label: "COMPLAINT ID", width: 86 },
-      { key: "date", label: "DATE", width: 89 },
-      { key: "location", label: "LOCATION", width: 76 },
-      { key: "room", label: "ROOM", width: 54 },
-      { key: "category", label: "CATEGORY", width: 82 },
-      { key: "title", label: "ISSUE", width: 137 },
-      { key: "technician", label: "TECHNICIAN", width: 96 },
-      { key: "status", label: "STATUS", width: 105 },
-    ];
+    const CONTENT_W = PAGE_W - LEFT - RIGHT;
+    const CONTENT_BOTTOM = PAGE_H - BOTTOM;
 
-    const tableWidth = columns.reduce((sum, col) => sum + col.width, 0);
+    const NAVY = "#102B52";
+    const GOLD = "#D6AD59";
+    const LIGHT = "#F3F6FA";
+    const INK = "#18314F";
+    const MUTED = "#64748B";
 
-    let y = 0;
+    let y = TOP;
 
-    function pageHeader(title) {
-      doc.addPage();
+    const clean = (value) =>
+      String(value ?? "")
+        .replace(/[\r\n\t]+/g, " ")
+        .replace(/\s+/g, " ")
+        .trim();
 
-      doc.rect(0, 0, PAGE_WIDTH, 63).fill("#102B52");
-
+    // Fixed-position text prevents automatic flow-based
+    // pagination. Long values are truncated inside cells.
+    const drawText = (value, x, top, width, height, options = {}) => {
       doc
-        .fillColor("#F0CC83")
-        .font("Helvetica-Bold")
-        .fontSize(10)
-        .text("AMI MAINTENANCE", LEFT, 12);
+        .font(options.bold ? "Helvetica-Bold" : "Helvetica")
+        .fontSize(options.size || 8)
+        .fillColor(options.color || INK)
+        .text(clean(value), x, top, {
+          width,
+          height,
+          lineBreak: false,
+          ellipsis: true,
+          align: options.align || "left",
+        });
+    };
 
-      doc.fillColor("#FFFFFF").fontSize(18).text(title, LEFT, 29);
+    // ======================================================
+    // CREATE PAGE
+    // ======================================================
 
-      doc.rect(0, 63, PAGE_WIDTH, 3).fill("#D6AD59");
+    const addPage = (title = "Maintenance Operations Report") => {
+      doc.addPage({
+        size: "A4",
+        layout: "landscape",
+        margin: 0,
+      });
 
-      doc.fillColor("#102B52");
-      y = 81;
-    }
+      doc.rect(0, 0, PAGE_W, 63).fill(NAVY);
+      doc.rect(0, 63, PAGE_W, 3).fill(GOLD);
 
-    function sectionTitle(value) {
-      if (y + 34 > PAGE_HEIGHT - 48) {
-        pageHeader("Maintenance Report — Continued");
+      drawText("AMI MAINTENANCE", LEFT, 11, 350, 17, {
+        bold: true,
+        size: 11,
+        color: GOLD,
+      });
+
+      drawText(title, LEFT, 30, CONTENT_W, 25, {
+        bold: true,
+        size: 18,
+        color: "#FFFFFF",
+      });
+
+      y = TOP;
+    };
+
+    // ======================================================
+    // SECTION HEADING
+    // ======================================================
+
+    const section = (title, requiredSpace = 36) => {
+      if (y + requiredSpace > CONTENT_BOTTOM) {
+        addPage("Maintenance Report — Continued");
       }
 
-      doc
-        .fillColor("#102B52")
-        .font("Helvetica-Bold")
-        .fontSize(12)
-        .text(value, LEFT, y);
+      drawText(title, LEFT, y, CONTENT_W, 22, {
+        bold: true,
+        size: 12,
+        color: NAVY,
+      });
 
-      y += 22;
-    }
+      y += 25;
+    };
 
-    function tableHeader() {
-      doc.rect(LEFT, y, tableWidth, 26).fill("#102B52");
+    // ======================================================
+    // SUMMARY KPI
+    // ======================================================
+
+    const drawSummary = () => {
+      section("Executive Summary", 120);
+
+      const metrics = [
+        ["TOTAL", stats.totalComplaints],
+        ["PENDING", stats.pendingComplaints],
+        ["IN PROGRESS", stats.inProgressComplaints],
+        ["WORK DONE", stats.completedWork],
+        ["RESOLVED", stats.resolvedComplaints],
+        ["REOPENED", stats.currentlyReopened],
+        ["OVERDUE", stats.overdueIssues],
+        ["MATERIAL", stats.materialRequired],
+      ];
+
+      const GAP = 7;
+
+      const WIDTH = (CONTENT_W - GAP * (metrics.length - 1)) / metrics.length;
+
+      metrics.forEach(([label, value], index) => {
+        const x = LEFT + index * (WIDTH + GAP);
+
+        doc.roundedRect(x, y, WIDTH, 61, 5).fill(LIGHT);
+
+        drawText(value, x + 5, y + 10, WIDTH - 10, 24, {
+          size: 17,
+          bold: true,
+          align: "center",
+        });
+
+        drawText(label, x + 3, y + 40, WIDTH - 6, 12, {
+          size: 7,
+          bold: true,
+          align: "center",
+          color: MUTED,
+        });
+      });
+
+      y += 76;
+
+      drawText(
+        `Resolution Rate: ${stats.resolutionRate}%  |  ` +
+          `Total Reopen Events: ${stats.totalReopenEvents}`,
+        LEFT,
+        y,
+        CONTENT_W,
+        16,
+        {
+          size: 9,
+          color: MUTED,
+        },
+      );
+
+      y += 25;
+    };
+
+    // ======================================================
+    // TABLE COLUMN CONFIGURATION
+    // ======================================================
+
+    const columns = [
+      { title: "COMPLAINT ID", width: 86 },
+      { title: "DATE", width: 90 },
+      { title: "LOCATION", width: 76 },
+      { title: "ROOM", width: 55 },
+      { title: "CATEGORY", width: 85 },
+      { title: "ISSUE", width: 138 },
+      { title: "TECHNICIAN", width: 105 },
+      { title: "STATUS", width: 100 },
+    ];
+
+    const TABLE_W = columns.reduce((sum, column) => sum + column.width, 0);
+
+    const HEADER_H = 27;
+    const ROW_H = 32;
+
+    // ======================================================
+    // TABLE HEADER
+    // ======================================================
+
+    const drawTableHeader = () => {
+      doc.rect(LEFT, y, TABLE_W, HEADER_H).fill(NAVY);
 
       let x = LEFT;
 
-      columns.forEach((col) => {
-        doc
-          .font("Helvetica-Bold")
-          .fontSize(7.5)
-          .fillColor("#FFFFFF")
-          .text(col.label, x + 5, y + 8, {
-            width: col.width - 10,
-            height: 14,
-            ellipsis: true,
-          });
+      columns.forEach((column) => {
+        drawText(column.title, x + 5, y + 8, column.width - 10, 14, {
+          bold: true,
+          size: 7.5,
+          color: "#FFFFFF",
+        });
 
-        x += col.width;
+        x += column.width;
       });
 
-      y += 26;
-    }
+      y += HEADER_H;
+    };
 
-    function tableRow(values, index) {
-      doc.font("Helvetica").fontSize(8);
+    // ======================================================
+    // TABLE ROW
+    // ======================================================
 
-      const heights = columns.map((col, i) =>
-        doc.heightOfString(str(values[i]), {
-          width: col.width - 10,
-          lineGap: 1,
-        }),
-      );
-
-      const rowHeight = Math.max(29, Math.min(72, Math.max(...heights) + 12));
-
-      if (y + rowHeight > PAGE_HEIGHT - 48) {
-        pageHeader("Detailed Complaint Register — Continued");
-        tableHeader();
+    const drawRow = (values, index) => {
+      if (y + ROW_H > CONTENT_BOTTOM) {
+        addPage("Detailed Complaint Register — Continued");
+        drawTableHeader();
       }
 
       if (index % 2 === 0) {
-        doc.rect(LEFT, y, tableWidth, rowHeight).fill("#F2F5FA");
+        doc.rect(LEFT, y, TABLE_W, ROW_H).fill(LIGHT);
       }
 
       let x = LEFT;
 
-      columns.forEach((col, i) => {
-        doc
-          .fillColor("#173353")
-          .font("Helvetica")
-          .fontSize(8)
-          .text(str(values[i]) || "—", x + 5, y + 6, {
-            width: col.width - 10,
-            height: rowHeight - 10,
-            ellipsis: true,
-            lineGap: 1,
-          });
+      columns.forEach((column, columnIndex) => {
+        drawText(
+          values[columnIndex] || "—",
+          x + 5,
+          y + 9,
+          column.width - 10,
+          15,
+          {
+            size: 8,
+          },
+        );
 
-        x += col.width;
+        x += column.width;
       });
 
       doc
-        .moveTo(LEFT, y + rowHeight)
-        .lineTo(LEFT + tableWidth, y + rowHeight)
+        .moveTo(LEFT, y + ROW_H)
+        .lineTo(LEFT + TABLE_W, y + ROW_H)
         .strokeColor("#E4EAF2")
         .lineWidth(0.4)
         .stroke();
 
-      y += rowHeight;
-    }
+      y += ROW_H;
+    };
 
-    // FIRST PAGE
-    pageHeader("Maintenance Operations Report");
+    // ======================================================
+    // START REPORT
+    // ======================================================
 
-    doc
-      .fillColor("#53667F")
-      .font("Helvetica")
-      .fontSize(9)
-      .text(
-        `Generated: ${dateText(new Date())}    |    ` +
-          `Period: ${data.period.from || "All"} - ${data.period.to || "All"}    |    ` +
-          `Location: ${data.filters.location}    |    ` +
-          `Category: ${data.filters.category}`,
-        LEFT,
-        y,
-        { width: CONTENT_WIDTH },
-      );
+    addPage();
 
-    y += 28;
-    sectionTitle("Executive Summary");
-
-    const summary = [
-      ["TOTAL", stats.totalComplaints],
-      ["PENDING", stats.pendingComplaints],
-      ["IN PROGRESS", stats.inProgressComplaints],
-      ["WORK DONE", stats.completedWork],
-      ["RESOLVED", stats.resolvedComplaints],
-      ["REOPENED", stats.currentlyReopened],
-      ["OVERDUE", stats.overdueIssues],
-      ["MATERIAL", stats.materialRequired],
-    ];
-
-    const gap = 7;
-    const boxWidth =
-      (CONTENT_WIDTH - gap * (summary.length - 1)) / summary.length;
-
-    summary.forEach(([label, value], index) => {
-      const x = LEFT + index * (boxWidth + gap);
-
-      doc.roundedRect(x, y, boxWidth, 63, 5).fill("#F1F5F9");
-
-      doc
-        .fillColor("#102B52")
-        .font("Helvetica-Bold")
-        .fontSize(17)
-        .text(String(value), x + 6, y + 9, {
-          width: boxWidth - 12,
-          align: "center",
-        });
-
-      doc
-        .fillColor("#52657D")
-        .font("Helvetica-Bold")
-        .fontSize(7)
-        .text(label, x + 3, y + 41, {
-          width: boxWidth - 6,
-          align: "center",
-        });
+    drawText(`Generated: ${dateText(new Date())}`, LEFT, y, CONTENT_W, 16, {
+      size: 9,
+      color: MUTED,
     });
 
-    y += 84;
+    y += 20;
 
-    doc
-      .fillColor("#52657D")
-      .font("Helvetica")
-      .fontSize(9)
-      .text(
-        `Resolution Rate: ${stats.resolutionRate}%   |   ` +
-          `Total Reopen Events: ${stats.totalReopenEvents}   |   ` +
-          `Registered Complaints: ${data.complaints.length}`,
-        LEFT,
-        y,
-      );
+    drawText(
+      `Period: ${data.period.from || "All"} to ${
+        data.period.to || "All"
+      }  |  Location: ${data.filters.location}  |  ` +
+        `Category: ${data.filters.category}`,
+      LEFT,
+      y,
+      CONTENT_W,
+      16,
+      {
+        size: 9,
+        color: MUTED,
+      },
+    );
 
     y += 27;
-    sectionTitle("Detailed Complaint Register");
 
-    tableHeader();
+    drawSummary();
 
-    data.complaints.forEach((c, index) => {
-      tableRow(
+    section("Detailed Complaint Register", 70);
+    drawTableHeader();
+
+    data.complaints.forEach((complaint, index) => {
+      drawRow(
         [
-          c.complaintId,
-          dateText(c.createdAt),
-          locationOf(c),
-          c.roomNumber,
-          c.category,
-          c.title,
-          name(c.assignedTo) || "Not Assigned",
-          up(c.status).replaceAll("_", " "),
+          complaint.complaintId,
+          dateText(complaint.createdAt),
+          locationOf(complaint),
+          complaint.roomNumber || "",
+          complaint.category,
+          complaint.title,
+          name(complaint.assignedTo) || "Not Assigned",
+          clean(complaint.status).replace(/_/g, " "),
         ],
         index,
       );
     });
 
     if (!data.complaints.length) {
-      doc
-        .fillColor("#64748B")
-        .fontSize(10)
-        .text("No matching complaints.", LEFT, y + 12);
-    }
-
-    // COMPACT LOCATION/CATEGORY SUMMARY
-    if (y + 95 > PAGE_HEIGHT - 48) {
-      pageHeader("Operational Breakdown");
-    } else {
-      y += 20;
-    }
-
-    sectionTitle("Location & Category Breakdown");
-
-    const locationText = stats.locationData
-      .map((r) => `${r._id}: ${r.total}`)
-      .join("    |    ");
-
-    const categoryText = stats.categoryData
-      .map((r) => `${r._id}: ${r.total}`)
-      .join("    |    ");
-
-    doc
-      .font("Helvetica")
-      .fontSize(9)
-      .fillColor("#374F6D")
-      .text(`Locations: ${locationText || "None"}`, LEFT, y, {
-        width: CONTENT_WIDTH,
+      drawText("No matching complaints found.", LEFT, y + 12, CONTENT_W, 18, {
+        color: MUTED,
+        size: 10,
       });
 
-    y = doc.y + 10;
-
-    if (y + 25 > PAGE_HEIGHT - 48) {
-      pageHeader("Operational Breakdown — Continued");
+      y += 35;
     }
 
-    doc.text(`Categories: ${categoryText || "None"}`, LEFT, y, {
-      width: CONTENT_WIDTH,
-    });
+    // ======================================================
+    // LOCATION & CATEGORY BREAKDOWN
+    // ======================================================
 
-    // PAGE FOOTERS
+    const locations = stats.locationData || [];
+    const categories = stats.categoryData || [];
+
+    if (locations.length || categories.length) {
+      // Continue on the current page when space permits.
+      // Otherwise create exactly one new page.
+      section("Operational Breakdown", 80);
+
+      const renderBreakdown = (label, records) => {
+        const content = records
+          .map((item) => `${item._id}: ${item.total}`)
+          .join("   |   ");
+
+        const line = `${label}: ${content || "None"}`;
+
+        // Wrap into manageable lines without overflowing.
+        const chunks = doc.font("Helvetica").fontSize(9).heightOfString(line, {
+          width: CONTENT_W,
+        });
+
+        const height = Math.min(Math.ceil(chunks) + 5, 110);
+
+        if (y + height > CONTENT_BOTTOM) {
+          addPage("Operational Breakdown — Continued");
+        }
+
+        doc
+          .font("Helvetica")
+          .fontSize(9)
+          .fillColor(INK)
+          .text(line, LEFT, y, {
+            width: CONTENT_W,
+            height: Math.min(height, CONTENT_BOTTOM - y),
+            ellipsis: true,
+          });
+
+        y += height + 12;
+      };
+
+      renderBreakdown("Locations", locations);
+      renderBreakdown("Categories", categories);
+    }
+
+    // ======================================================
+    // FOOTERS — SAFE ABSOLUTE POSITIONS
+    // ======================================================
+
     const pages = doc.bufferedPageRange();
+    const totalPages = pages.count;
 
-    for (let i = 0; i < pages.count; i++) {
-      doc.switchToPage(i);
+    for (let index = 0; index < totalPages; index++) {
+      doc.switchToPage(pages.start + index);
+
+      const footerY = PAGE_H - 31;
 
       doc
-        .moveTo(LEFT, PAGE_HEIGHT - 34)
-        .lineTo(RIGHT, PAGE_HEIGHT - 34)
-        .strokeColor("#DCE3EB")
+        .moveTo(LEFT, footerY)
+        .lineTo(PAGE_W - RIGHT, footerY)
+        .strokeColor("#E2E8F0")
+        .lineWidth(0.5)
         .stroke();
 
-      doc
-        .fillColor("#64748B")
-        .font("Helvetica")
-        .fontSize(8)
-        .text(
-          "AMI MAINTENANCE | Confidential Maintenance Operations",
-          LEFT,
-          PAGE_HEIGHT - 27,
-          { width: 430 },
-        );
+      drawText(
+        "AMI MAINTENANCE | Maintenance Operations Report",
+        LEFT,
+        footerY + 7,
+        460,
+        12,
+        {
+          size: 7.5,
+          color: MUTED,
+        },
+      );
 
-      doc.text(
-        `Page ${i + 1} of ${pages.count}`,
-        RIGHT - 90,
-        PAGE_HEIGHT - 27,
-        { width: 90, align: "right" },
+      drawText(
+        `Page ${index + 1} of ${totalPages}`,
+        PAGE_W - RIGHT - 105,
+        footerY + 7,
+        105,
+        12,
+        {
+          size: 7.5,
+          color: MUTED,
+          align: "right",
+        },
       );
     }
 
+    // ======================================================
+    // RESPONSE
+    // ======================================================
+
     res.setHeader("Content-Type", "application/pdf");
+
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="AMI_MAINTENANCE_COMPLETE_${dateKey()}.pdf"`,
+      `attachment; filename="AMI_MAINTENANCE_REPORT_${dateKey()}.pdf"`,
     );
 
     doc.pipe(res);
