@@ -1,6 +1,8 @@
 const express = require("express");
-
 const router = express.Router();
+
+const { protect } = require("../../middleware/authMiddleware");
+const roleMiddleware = require("../../middleware/roleMiddleware");
 
 const {
   createRequest,
@@ -8,16 +10,23 @@ const {
   updateMaterialStatus,
 } = require("../../controllers/store/requestController");
 
-// CREATE REQUEST
+router.use(protect);
 
-router.post("/add", createRequest);
+// Legacy general requests
+router.post("/add", roleMiddleware("MAINTENANCE_MANAGER"), createRequest);
 
-// GET ALL REQUESTS
+// Manager and Technician complaint-wise requests
+router.get(
+  "/all",
+  roleMiddleware("MAINTENANCE_MANAGER", "STORE_MANAGER"),
+  getRequests,
+);
 
-router.get("/all", getRequests);
-
-// UPDATE STATUS
-
-router.put("/update-material/:requestId/:materialId", updateMaterialStatus);
+// Item-wise Store approval
+router.put(
+  "/update-material/:requestId/:materialId",
+  roleMiddleware("STORE_MANAGER"),
+  updateMaterialStatus,
+);
 
 module.exports = router;

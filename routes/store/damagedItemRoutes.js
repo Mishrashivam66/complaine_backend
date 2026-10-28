@@ -1,39 +1,23 @@
 const express = require("express");
-
 const router = express.Router();
+
+const { protect } = require("../../middleware/authMiddleware");
+const roleMiddleware = require("../../middleware/roleMiddleware");
 
 const {
   addDamagedItem,
-
   getDamagedItems,
-
   updateDamagedStatus,
-
   deleteDamagedItem,
 } = require("../../controllers/store/damagedItemController");
 
-// ==========================================
-// ADD
-// ==========================================
+router.use(protect);
+router.use(roleMiddleware("STORE_MANAGER"));
 
+// Existing legacy endpoints retained
 router.post("/add", addDamagedItem);
-
-// ==========================================
-// GET ALL
-// ==========================================
-
 router.get("/all", getDamagedItems);
-
-// ==========================================
-// UPDATE STATUS
-// ==========================================
-
-router.put("/update/:id", updateDamagedStatus);
-
-// ==========================================
-// DELETE
-// ==========================================
-
-router.delete("/delete/:id", deleteDamagedItem);
+router.put("/update-status/:id", updateDamagedStatus);
+router.delete("/:id", deleteDamagedItem);
 
 module.exports = router;

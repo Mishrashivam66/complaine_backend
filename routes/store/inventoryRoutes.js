@@ -1,29 +1,27 @@
 const express = require("express");
-
 const router = express.Router();
 
+const { protect } = require("../../middleware/authMiddleware");
+const roleMiddleware = require("../../middleware/roleMiddleware");
+
 const {
-  createInventoryItem,
-  getInventoryItems,
-  getSingleInventoryItem,
-  updateInventoryItem,
-  deleteInventoryItem,
-  updateStock,
+  addInventory,
+  getAllInventory,
+  getSingleInventory,
+  updateInventory,
+  deleteInventory,
   getLowStockItems,
-} = require("../../controllers/store/inventoryController");
+} = require("../../controllers/store/addInventoryController");
 
-router.post("/add", createInventoryItem);
+router.use(protect);
+router.use(roleMiddleware("STORE_MANAGER"));
 
-router.get("/all", getInventoryItems);
-
+router.get("/all", getAllInventory);
 router.get("/low-stock", getLowStockItems);
+router.get("/:id", getSingleInventory);
 
-router.put("/update/:id", updateInventoryItem);
-
-router.delete("/delete/:id", deleteInventoryItem);
-
-router.put("/stock/:id", updateStock);
-
-router.get("/:id", getSingleInventoryItem);
+router.post("/add", addInventory);
+router.put("/:id", updateInventory);
+router.delete("/:id", deleteInventory);
 
 module.exports = router;

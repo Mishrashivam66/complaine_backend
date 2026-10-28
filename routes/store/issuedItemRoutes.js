@@ -1,31 +1,28 @@
 const express = require("express");
-
 const router = express.Router();
+
+const { protect } = require("../../middleware/authMiddleware");
+const roleMiddleware = require("../../middleware/roleMiddleware");
 
 const {
   issueItem,
-
   getIssuedItems,
-
   updateIssuedStatus,
 } = require("../../controllers/store/issuedItemController");
 
-// ==========================================
-// ISSUE ITEM
-// ==========================================
+router.use(protect);
 
-router.post("/issue", issueItem);
+// Issue material and deduct stock
+router.post("/issue", roleMiddleware("STORE_MANAGER"), issueItem);
 
-// ==========================================
-// GET ISSUED ITEMS
-// ==========================================
+// View issue history
+router.get(
+  "/all",
+  roleMiddleware("STORE_MANAGER", "MAINTENANCE_MANAGER"),
+  getIssuedItems,
+);
 
-router.get("/all", getIssuedItems);
-
-// ==========================================
-// DELIVER ITEM
-// ==========================================
-
-router.put("/deliver/:id", updateIssuedStatus);
+// Confirm delivery
+router.put("/deliver/:id", roleMiddleware("STORE_MANAGER"), updateIssuedStatus);
 
 module.exports = router;

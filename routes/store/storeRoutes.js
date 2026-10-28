@@ -1,52 +1,76 @@
 const express = require("express");
-
 const router = express.Router();
 
-const {
-  createRequest,
-  getRequests,
-  updateMaterialStatus,
-} = require("../../controllers/store/requestController");
-
 const { protect } = require("../../middleware/authMiddleware");
-
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
-// ==========================================
-// CREATE GENERAL STORE REQUEST
-// ==========================================
+const dashboardRoutes = require("./dashboardRoutes");
+const inventoryRoutes = require("./inventoryRoutes");
+const addInventoryRoutes = require("./addInventoryRoutes");
+const stockRoutes = require("./stockRoutes");
+const lowStockRoutes = require("./lowStockRoutes");
+const requestRoutes = require("./requestRoutes");
+const issuedItemRoutes = require("./issuedItemRoutes");
+const damagedItemRoutes = require("./damagedItemRoutes");
 
-router.post(
-  "/add",
-  protect,
-  roleMiddleware("MAINTENANCE_MANAGER"),
-  createRequest,
-);
+// NEW: Stock Inward & Excel Import
+const stockInwardRoutes = require("./stockInwardRoutes");
 
-// ==========================================
-// GET REQUESTS
-// ==========================================
-
-router.get(
-  "/all",
-  protect,
-  roleMiddleware("MAINTENANCE_MANAGER", "STORE_MANAGER"),
-  getRequests,
-);
+// Authentication
+router.use(protect);
 
 // ==========================================
-// UPDATE COMPLAINT MATERIAL ITEM STATUS
+// DASHBOARD
 // ==========================================
 
-router.put(
-  "/update-material/:requestId/:materialId",
-  protect,
+router.use("/dashboard", roleMiddleware("STORE_MANAGER"), dashboardRoutes);
+
+// ==========================================
+// INVENTORY
+// ==========================================
+
+router.use("/inventory", roleMiddleware("STORE_MANAGER"), inventoryRoutes);
+
+router.use(
+  "/add-inventory",
   roleMiddleware("STORE_MANAGER"),
-  updateMaterialStatus,
+  addInventoryRoutes,
 );
 
 // ==========================================
-// EXPORT
+// STOCK
 // ==========================================
+
+router.use("/stock", roleMiddleware("STORE_MANAGER"), stockRoutes);
+
+router.use("/low-stock", roleMiddleware("STORE_MANAGER"), lowStockRoutes);
+
+// ==========================================
+// NEW: STOCK INWARD
+// ==========================================
+
+router.use("/stock-inward", roleMiddleware("STORE_MANAGER"), stockInwardRoutes);
+
+// ==========================================
+// MATERIAL REQUESTS
+// ==========================================
+
+router.use("/requests", requestRoutes);
+
+// ==========================================
+// MATERIAL ISSUE
+// ==========================================
+
+router.use("/issued-items", issuedItemRoutes);
+
+// ==========================================
+// RETRIEVED ITEMS (LEGACY ROUTE)
+// ==========================================
+
+router.use(
+  "/damaged-items",
+  roleMiddleware("STORE_MANAGER"),
+  damagedItemRoutes,
+);
 
 module.exports = router;
