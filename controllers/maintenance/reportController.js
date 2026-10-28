@@ -662,8 +662,9 @@ exports.exportExcelReport = async (req, res) => {
 // =======================================================
 
 /* ==========================================================
-   AMI MAINTENANCE — PROFESSIONAL PDF EXPORT
-   Manual Pagination | Compact Report | No Empty Pages
+   AMI MAINTENANCE — COMPLETE DETAILED PDF REPORT
+   Uses SAME reportRows() data as Excel
+   Full fields | Safe pagination | No intentional blank pages
    ========================================================== */
 
 exports.exportPDFReport = async (req, res) => {
@@ -671,406 +672,476 @@ exports.exportPDFReport = async (req, res) => {
     const data = await loadData(req);
     const stats = analytics(data.complaints);
 
+    // SAME ROW DATA AS EXCEL
+    const records = reportRows(data.complaints);
+
     const doc = new PDFDocument({
       size: "A4",
       layout: "landscape",
+      margin: 0,
       autoFirstPage: false,
       bufferPages: true,
       compress: true,
-      margin: 0,
     });
 
-    const PAGE_W = 841.89;
-    const PAGE_H = 595.28;
+    const PW = 841.89;
+    const PH = 595.28;
 
-    const LEFT = 34;
-    const RIGHT = 34;
-    const TOP = 76;
-    const BOTTOM = 54;
-
-    const CONTENT_W = PAGE_W - LEFT - RIGHT;
-    const CONTENT_BOTTOM = PAGE_H - BOTTOM;
+    const LEFT = 32;
+    const RIGHT = 32;
+    const CONTENT_W = PW - LEFT - RIGHT;
+    const BOTTOM = PH - 48;
 
     const NAVY = "#102B52";
     const GOLD = "#D6AD59";
-    const LIGHT = "#F3F6FA";
-    const INK = "#18314F";
+    const INK = "#1A3556";
     const MUTED = "#64748B";
+    const LIGHT = "#F3F6FA";
+    const LINE = "#E2E8F0";
 
-    let y = TOP;
+    let y = 76;
+    let sectionPages = 0;
 
-    const clean = (value) =>
-      String(value ?? "")
-        .replace(/[\r\n\t]+/g, " ")
-        .replace(/\s+/g, " ")
-        .trim();
+    const asText = (value) => {
+      if (value === null || value === undefined) return "";
 
-    // Fixed-position text prevents automatic flow-based
-    // pagination. Long values are truncated inside cells.
-    const drawText = (value, x, top, width, height, options = {}) => {
-      doc
-        .font(options.bold ? "Helvetica-Bold" : "Helvetica")
-        .fontSize(options.size || 8)
-        .fillColor(options.color || INK)
-        .text(clean(value), x, top, {
-          width,
-          height,
-          lineBreak: false,
-          ellipsis: true,
-          align: options.align || "left",
-        });
+      return String(value).replace(/\r\n?/g, "\n").replace(/\t/g, "    ");
     };
 
-    // ======================================================
-    // CREATE PAGE
-    // ======================================================
+    // ------------------------------------------------------
+    // SAFE ABSOLUTE TEXT DRAWING
+    // ------------------------------------------------------
 
-    const addPage = (title = "Maintenance Operations Report") => {
+    function drawLine(value, x, top, width, options = {}) {
+      const fontSize = options.size || 8;
+
+      doc
+        .font(options.bold ? "Helvetica-Bold" : "Helvetica")
+        .fontSize(fontSize)
+        .fillColor(options.color || INK)
+        .text(asText(value), x, top, {
+          width,
+          height: options.height || fontSize + 4,
+          lineBreak: false,
+          align: options.align || "left",
+        });
+    }
+
+    // ------------------------------------------------------
+    // NEW PAGE
+    // ------------------------------------------------------
+
+    function newPage(title = "Detailed Maintenance Report") {
       doc.addPage({
         size: "A4",
         layout: "landscape",
         margin: 0,
       });
 
-      doc.rect(0, 0, PAGE_W, 63).fill(NAVY);
-      doc.rect(0, 63, PAGE_W, 3).fill(GOLD);
+      sectionPages += 1;
 
-      drawText("AMI MAINTENANCE", LEFT, 11, 350, 17, {
+      doc.rect(0, 0, PW, 62).fill(NAVY);
+      doc.rect(0, 62, PW, 3).fill(GOLD);
+
+      drawLine("AMI MAINTENANCE", LEFT, 11, 350, {
+        size: 10,
         bold: true,
-        size: 11,
         color: GOLD,
       });
 
-      drawText(title, LEFT, 30, CONTENT_W, 25, {
+      drawLine(title, LEFT, 29, CONTENT_W, {
+        size: 17,
         bold: true,
-        size: 18,
         color: "#FFFFFF",
+        height: 24,
       });
 
-      y = TOP;
-    };
+      y = 78;
+    }
 
-    // ======================================================
-    // SECTION HEADING
-    // ======================================================
+    function ensureSpace(height) {
+      if (y + height > BOTTOM) {
+        newPage("Maintenance Report — Continued");
+      }
+    }
 
-    const section = (title, requiredSpace = 36) => {
-      if (y + requiredSpace > CONTENT_BOTTOM) {
-        addPage("Maintenance Report — Continued");
+    // ------------------------------------------------------
+    // PRE-WRAP TEXT INTO LINES
+    // Prevents cutting off long descriptions and remarks
+    // ------------------------------------------------------
+
+    function wrapText(value, width, size = 8) {
+      const content = asText(value) || "—";
+
+      doc.font("Helvetica").fontSize(size);
+
+      const result = [];
+
+      for (const paragraph of content.split("\n")) {
+        if (!paragraph) {
+          result.push("");
+          continue;
+        }
+
+        let current = "";
+
+        // Split long words too, so no data is lost.
+        const tokens = paragraph.match(/\S+|\s+/g) || [];
+
+        for (const token of tokens) {
+          const candidate = current + token;
+
+          if (doc.widthOfString(candidate) <= width) {
+            current = candidate;
+            continue;
+          }
+
+          if (current.trim()) {
+            result.push(current.trimEnd());
+            current = "";
+          }
+
+          // Token itself may be longer than column width.
+          let fragment = "";
+
+          for (const character of token) {
+            if (fragment && doc.widthOfString(fragment + character) > width) {
+              result.push(fragment);
+              fragment = character;
+            } else {
+              fragment += character;
+            }
+          }
+
+          current = fragment;
+        }
+
+        if (current.trim()) {
+          result.push(current.trimEnd());
+        }
       }
 
-      drawText(title, LEFT, y, CONTENT_W, 22, {
-        bold: true,
-        size: 12,
-        color: NAVY,
-      });
+      return result.length ? result : ["—"];
+    }
 
-      y += 25;
-    };
+    // ------------------------------------------------------
+    // REPORT TITLE AND FILTER INFORMATION
+    // ------------------------------------------------------
 
-    // ======================================================
-    // SUMMARY KPI
-    // ======================================================
+    newPage("Complete Maintenance Operations Report");
 
-    const drawSummary = () => {
-      section("Executive Summary", 120);
-
-      const metrics = [
-        ["TOTAL", stats.totalComplaints],
-        ["PENDING", stats.pendingComplaints],
-        ["IN PROGRESS", stats.inProgressComplaints],
-        ["WORK DONE", stats.completedWork],
-        ["RESOLVED", stats.resolvedComplaints],
-        ["REOPENED", stats.currentlyReopened],
-        ["OVERDUE", stats.overdueIssues],
-        ["MATERIAL", stats.materialRequired],
-      ];
-
-      const GAP = 7;
-
-      const WIDTH = (CONTENT_W - GAP * (metrics.length - 1)) / metrics.length;
-
-      metrics.forEach(([label, value], index) => {
-        const x = LEFT + index * (WIDTH + GAP);
-
-        doc.roundedRect(x, y, WIDTH, 61, 5).fill(LIGHT);
-
-        drawText(value, x + 5, y + 10, WIDTH - 10, 24, {
-          size: 17,
-          bold: true,
-          align: "center",
-        });
-
-        drawText(label, x + 3, y + 40, WIDTH - 6, 12, {
-          size: 7,
-          bold: true,
-          align: "center",
-          color: MUTED,
-        });
-      });
-
-      y += 76;
-
-      drawText(
-        `Resolution Rate: ${stats.resolutionRate}%  |  ` +
-          `Total Reopen Events: ${stats.totalReopenEvents}`,
-        LEFT,
-        y,
-        CONTENT_W,
-        16,
-        {
-          size: 9,
-          color: MUTED,
-        },
-      );
-
-      y += 25;
-    };
-
-    // ======================================================
-    // TABLE COLUMN CONFIGURATION
-    // ======================================================
-
-    const columns = [
-      { title: "COMPLAINT ID", width: 86 },
-      { title: "DATE", width: 90 },
-      { title: "LOCATION", width: 76 },
-      { title: "ROOM", width: 55 },
-      { title: "CATEGORY", width: 85 },
-      { title: "ISSUE", width: 138 },
-      { title: "TECHNICIAN", width: 105 },
-      { title: "STATUS", width: 100 },
-    ];
-
-    const TABLE_W = columns.reduce((sum, column) => sum + column.width, 0);
-
-    const HEADER_H = 27;
-    const ROW_H = 32;
-
-    // ======================================================
-    // TABLE HEADER
-    // ======================================================
-
-    const drawTableHeader = () => {
-      doc.rect(LEFT, y, TABLE_W, HEADER_H).fill(NAVY);
-
-      let x = LEFT;
-
-      columns.forEach((column) => {
-        drawText(column.title, x + 5, y + 8, column.width - 10, 14, {
-          bold: true,
-          size: 7.5,
-          color: "#FFFFFF",
-        });
-
-        x += column.width;
-      });
-
-      y += HEADER_H;
-    };
-
-    // ======================================================
-    // TABLE ROW
-    // ======================================================
-
-    const drawRow = (values, index) => {
-      if (y + ROW_H > CONTENT_BOTTOM) {
-        addPage("Detailed Complaint Register — Continued");
-        drawTableHeader();
-      }
-
-      if (index % 2 === 0) {
-        doc.rect(LEFT, y, TABLE_W, ROW_H).fill(LIGHT);
-      }
-
-      let x = LEFT;
-
-      columns.forEach((column, columnIndex) => {
-        drawText(
-          values[columnIndex] || "—",
-          x + 5,
-          y + 9,
-          column.width - 10,
-          15,
-          {
-            size: 8,
-          },
-        );
-
-        x += column.width;
-      });
-
-      doc
-        .moveTo(LEFT, y + ROW_H)
-        .lineTo(LEFT + TABLE_W, y + ROW_H)
-        .strokeColor("#E4EAF2")
-        .lineWidth(0.4)
-        .stroke();
-
-      y += ROW_H;
-    };
-
-    // ======================================================
-    // START REPORT
-    // ======================================================
-
-    addPage();
-
-    drawText(`Generated: ${dateText(new Date())}`, LEFT, y, CONTENT_W, 16, {
+    drawLine(`Generated: ${dateText(new Date())}`, LEFT, y, CONTENT_W, {
       size: 9,
       color: MUTED,
     });
 
     y += 20;
 
-    drawText(
-      `Period: ${data.period.from || "All"} to ${
-        data.period.to || "All"
-      }  |  Location: ${data.filters.location}  |  ` +
-        `Category: ${data.filters.category}`,
+    const filterText = [
+      `Period: ${data.period.from || "All Time"} to ${
+        data.period.to || "All Time"
+      }`,
+      `Location: ${data.filters.location}`,
+      `Category: ${data.filters.category}`,
+      `Status: ${data.filters.status}`,
+      `Priority: ${data.filters.priority}`,
+    ];
+
+    for (const line of filterText) {
+      drawLine(line, LEFT, y, CONTENT_W, {
+        size: 9,
+      });
+      y += 18;
+    }
+
+    y += 9;
+
+    // ------------------------------------------------------
+    // COMPACT EXECUTIVE SUMMARY
+    // ------------------------------------------------------
+
+    ensureSpace(115);
+
+    drawLine("EXECUTIVE SUMMARY", LEFT, y, CONTENT_W, {
+      size: 12,
+      bold: true,
+      color: NAVY,
+    });
+
+    y += 24;
+
+    const metrics = [
+      ["Total", stats.totalComplaints],
+      ["Pending", stats.pendingComplaints],
+      ["Assigned", stats.assignedComplaints],
+      ["In Progress", stats.inProgressComplaints],
+      ["Work Done", stats.completedWork],
+      ["Resolved", stats.resolvedComplaints],
+      ["Reopened", stats.currentlyReopened],
+      ["Overdue", stats.overdueIssues],
+    ];
+
+    const gap = 7;
+    const cardWidth = (CONTENT_W - gap * (metrics.length - 1)) / metrics.length;
+
+    metrics.forEach(([label, value], index) => {
+      const x = LEFT + index * (cardWidth + gap);
+
+      doc.roundedRect(x, y, cardWidth, 58, 5).fill(LIGHT);
+
+      drawLine(value, x + 5, y + 10, cardWidth - 10, {
+        size: 16,
+        bold: true,
+        align: "center",
+      });
+
+      drawLine(label.toUpperCase(), x + 4, y + 38, cardWidth - 8, {
+        size: 7,
+        bold: true,
+        color: MUTED,
+        align: "center",
+      });
+    });
+
+    y += 73;
+
+    drawLine(
+      `Resolution Rate: ${stats.resolutionRate}%` +
+        `    |    Material Required: ${stats.materialRequired}` +
+        `    |    Total Reopen Events: ${stats.totalReopenEvents}`,
       LEFT,
       y,
       CONTENT_W,
-      16,
-      {
-        size: 9,
-        color: MUTED,
-      },
+      { size: 9, color: MUTED },
     );
 
-    y += 27;
+    y += 28;
 
-    drawSummary();
+    // ------------------------------------------------------
+    // COMPLETE COMPLAINT DETAILS
+    //
+    // Every key in reportRows() is included.
+    // Two columns, wrapped values, automatic continuation.
+    // ------------------------------------------------------
 
-    section("Detailed Complaint Register", 70);
-    drawTableHeader();
+    const COLUMN_GAP = 12;
+    const COL_W = (CONTENT_W - COLUMN_GAP) / 2;
 
-    data.complaints.forEach((complaint, index) => {
-      drawRow(
-        [
-          complaint.complaintId,
-          dateText(complaint.createdAt),
-          locationOf(complaint),
-          complaint.roomNumber || "",
-          complaint.category,
-          complaint.title,
-          name(complaint.assignedTo) || "Not Assigned",
-          clean(complaint.status).replace(/_/g, " "),
-        ],
-        index,
+    const LABEL_W = 119;
+    const VALUE_W = COL_W - LABEL_W - 20;
+
+    const lineHeight = 11.5;
+    const minRowHeight = 25;
+
+    function drawDetailCell(label, lines, x, top, rowHeight, continued) {
+      drawLine(
+        continued ? `${label} (cont.)` : label,
+        x + 8,
+        top + 7,
+        LABEL_W - 10,
+        {
+          size: 7.6,
+          bold: true,
+          color: MUTED,
+          height: 13,
+        },
       );
-    });
 
-    if (!data.complaints.length) {
-      drawText("No matching complaints found.", LEFT, y + 12, CONTENT_W, 18, {
-        color: MUTED,
-        size: 10,
+      lines.forEach((line, index) => {
+        drawLine(line, x + LABEL_W, top + 7 + index * lineHeight, VALUE_W, {
+          size: 8,
+          color: INK,
+          height: lineHeight,
+        });
       });
-
-      y += 35;
     }
 
-    // ======================================================
-    // LOCATION & CATEGORY BREAKDOWN
-    // ======================================================
+    function drawPair(leftField, rightField) {
+      const leftLines = leftField ? wrapText(leftField[1], VALUE_W, 8) : [];
 
-    const locations = stats.locationData || [];
-    const categories = stats.categoryData || [];
+      const rightLines = rightField ? wrapText(rightField[1], VALUE_W, 8) : [];
 
-    if (locations.length || categories.length) {
-      // Continue on the current page when space permits.
-      // Otherwise create exactly one new page.
-      section("Operational Breakdown", 80);
+      let offset = 0;
+      const maxLines = Math.max(leftLines.length, rightLines.length, 1);
 
-      const renderBreakdown = (label, records) => {
-        const content = records
-          .map((item) => `${item._id}: ${item.total}`)
-          .join("   |   ");
+      // A long value can span multiple pages without
+      // deleting any of its lines.
+      while (offset < maxLines) {
+        if (y + minRowHeight > BOTTOM) {
+          newPage("Complaint Details — Continued");
+        }
 
-        const line = `${label}: ${content || "None"}`;
+        const available = BOTTOM - y - 14;
 
-        // Wrap into manageable lines without overflowing.
-        const chunks = doc.font("Helvetica").fontSize(9).heightOfString(line, {
-          width: CONTENT_W,
-        });
+        const canFit = Math.max(1, Math.floor(available / lineHeight));
 
-        const height = Math.min(Math.ceil(chunks) + 5, 110);
+        const take = Math.min(canFit, maxLines - offset);
 
-        if (y + height > CONTENT_BOTTOM) {
-          addPage("Operational Breakdown — Continued");
+        const leftPart = leftLines.slice(offset, offset + take);
+
+        const rightPart = rightLines.slice(offset, offset + take);
+
+        const rowHeight = Math.max(minRowHeight, 14 + take * lineHeight);
+
+        if (y + rowHeight > BOTTOM) {
+          newPage("Complaint Details — Continued");
+          continue;
+        }
+
+        doc.rect(LEFT, y, CONTENT_W, rowHeight).fill(LIGHT);
+
+        drawDetailCell(
+          leftField?.[0] || "",
+          leftPart,
+          LEFT,
+          y,
+          rowHeight,
+          offset > 0,
+        );
+
+        if (rightField) {
+          drawDetailCell(
+            rightField[0],
+            rightPart,
+            LEFT + COL_W + COLUMN_GAP,
+            y,
+            rowHeight,
+            offset > 0,
+          );
         }
 
         doc
-          .font("Helvetica")
-          .fontSize(9)
-          .fillColor(INK)
-          .text(line, LEFT, y, {
-            width: CONTENT_W,
-            height: Math.min(height, CONTENT_BOTTOM - y),
-            ellipsis: true,
-          });
+          .moveTo(LEFT, y + rowHeight)
+          .lineTo(LEFT + CONTENT_W, y + rowHeight)
+          .strokeColor(LINE)
+          .lineWidth(0.35)
+          .stroke();
 
-        y += height + 12;
-      };
-
-      renderBreakdown("Locations", locations);
-      renderBreakdown("Categories", categories);
+        y += rowHeight + 3;
+        offset += take;
+      }
     }
 
-    // ======================================================
-    // FOOTERS — SAFE ABSOLUTE POSITIONS
-    // ======================================================
+    // ------------------------------------------------------
+    // EACH COMPLAINT — COMPLETE EXCEL-EQUIVALENT RECORD
+    // ------------------------------------------------------
 
-    const pages = doc.bufferedPageRange();
-    const totalPages = pages.count;
+    records.forEach((record, index) => {
+      const fields = Object.entries(record);
 
-    for (let index = 0; index < totalPages; index++) {
-      doc.switchToPage(pages.start + index);
+      const complaintId = record["Complaint ID"] || `Record ${index + 1}`;
 
-      const footerY = PAGE_H - 31;
+      ensureSpace(60);
 
-      doc
-        .moveTo(LEFT, footerY)
-        .lineTo(PAGE_W - RIGHT, footerY)
-        .strokeColor("#E2E8F0")
-        .lineWidth(0.5)
-        .stroke();
+      // Complaint title bar.
+      doc.roundedRect(LEFT, y, CONTENT_W, 32, 4).fill(NAVY);
 
-      drawText(
-        "AMI MAINTENANCE | Maintenance Operations Report",
-        LEFT,
-        footerY + 7,
-        460,
-        12,
+      drawLine(
+        `${index + 1}. COMPLAINT ${complaintId}`,
+        LEFT + 12,
+        y + 9,
+        CONTENT_W - 190,
         {
-          size: 7.5,
+          size: 11,
+          bold: true,
+          color: "#FFFFFF",
+        },
+      );
+
+      drawLine(
+        `${index + 1} / ${records.length}`,
+        LEFT + CONTENT_W - 145,
+        y + 10,
+        130,
+        {
+          size: 8,
+          bold: true,
+          color: GOLD,
+          align: "right",
+        },
+      );
+
+      y += 39;
+
+      // Same columns as Excel; no field is omitted.
+      for (let i = 0; i < fields.length; i += 2) {
+        drawPair(fields[i], fields[i + 1] || null);
+      }
+
+      y += 13;
+    });
+
+    if (!records.length) {
+      ensureSpace(42);
+
+      drawLine(
+        "No matching complaints found for the selected filters.",
+        LEFT,
+        y,
+        CONTENT_W,
+        {
+          size: 11,
           color: MUTED,
         },
       );
 
-      drawText(
-        `Page ${index + 1} of ${totalPages}`,
-        PAGE_W - RIGHT - 105,
-        footerY + 7,
-        105,
-        12,
+      y += 35;
+    }
+
+    // ------------------------------------------------------
+    // FOOTER — FIXED POSITION, NO AUTOMATIC PAGE BREAK
+    // ------------------------------------------------------
+
+    const pageRange = doc.bufferedPageRange();
+    const totalPages = pageRange.count;
+
+    for (let i = 0; i < totalPages; i++) {
+      doc.switchToPage(pageRange.start + i);
+
+      const fy = PH - 32;
+
+      doc
+        .moveTo(LEFT, fy)
+        .lineTo(PW - RIGHT, fy)
+        .strokeColor(LINE)
+        .lineWidth(0.5)
+        .stroke();
+
+      drawLine(
+        "AMI MAINTENANCE | CONFIDENTIAL MAINTENANCE REPORT",
+        LEFT,
+        fy + 8,
+        470,
         {
           size: 7.5,
           color: MUTED,
+          height: 12,
+        },
+      );
+
+      drawLine(
+        `Page ${i + 1} of ${totalPages}`,
+        PW - RIGHT - 115,
+        fy + 8,
+        115,
+        {
+          size: 7.5,
+          color: MUTED,
+          height: 12,
           align: "right",
         },
       );
     }
 
-    // ======================================================
-    // RESPONSE
-    // ======================================================
+    // ------------------------------------------------------
+    // SEND PDF
+    // ------------------------------------------------------
 
     res.setHeader("Content-Type", "application/pdf");
 
     res.setHeader(
       "Content-Disposition",
-      `attachment; filename="AMI_MAINTENANCE_REPORT_${dateKey()}.pdf"`,
+      `attachment; filename="AMI_MAINTENANCE_DETAILED_${dateKey()}.pdf"`,
     );
 
     doc.pipe(res);
