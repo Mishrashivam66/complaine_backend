@@ -44,6 +44,28 @@ const protect = async (req, res, next) => {
       });
     }
 
+    // ======================================
+    // DEBUG: LOGGED-IN USER ROLE
+    // ======================================
+
+    if (
+      req.method === "POST" &&
+      req.originalUrl.includes("/store/issued-items/issue")
+    ) {
+      console.log("========== ISSUE AUTH CHECK ==========");
+      console.log("Method:", req.method);
+      console.log("Path:", req.originalUrl);
+      console.log("Authenticated User ID:", String(user._id));
+      console.log("Database Role:", user.role);
+      console.log(
+        "Normalized Role:",
+        String(user.role || "")
+          .trim()
+          .toUpperCase(),
+      );
+      console.log("======================================");
+    }
+
     req.user = user;
 
     return next();
@@ -62,6 +84,15 @@ const protect = async (req, res, next) => {
 // ==========================================
 
 const authorizeRoles = (...roles) => {
+  const allowedRoles = roles
+    .flat()
+    .map((role) =>
+      String(role || "")
+        .trim()
+        .toUpperCase(),
+    )
+    .filter(Boolean);
+
   return (req, res, next) => {
     if (!req.user) {
       return res.status(401).json({
@@ -73,8 +104,6 @@ const authorizeRoles = (...roles) => {
     const userRole = String(req.user.role || "")
       .trim()
       .toUpperCase();
-
-    const allowedRoles = roles.map((role) => String(role).trim().toUpperCase());
 
     if (!allowedRoles.includes(userRole)) {
       return res.status(403).json({
