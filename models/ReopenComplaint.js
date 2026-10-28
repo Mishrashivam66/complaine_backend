@@ -20,10 +20,9 @@ const reopenComplaintSchema = new mongoose.Schema(
 
     jobCard: {
       type: mongoose.Schema.Types.ObjectId,
-
       ref: "JobCard",
-
-      required: true,
+      default: null,
+      required: false,
     },
 
     previousWorker: {
