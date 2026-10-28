@@ -19,24 +19,46 @@ const {
   getMyJobs,
 } = require("../../controllers/maintenance/technicianSelfController");
 
+const {
+  startRework,
+  markWorkDone,
+} = require("../../controllers/maintenance/technicianActionController");
+
 const { protect } = require("../../middleware/authMiddleware");
+
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
 const managerAccess = [protect, roleMiddleware("MAINTENANCE_MANAGER")];
 
 const technicianAccess = [protect, roleMiddleware("TECHNICIAN")];
 
-// ==========================================
-// TECHNICIAN OWN JOB ROUTES
-// ==========================================
+// ======================================================
+// TECHNICIAN — OWN ASSIGNED COMPLAINTS
+// ======================================================
 
 router.get("/my-jobs", ...technicianAccess, getMyJobs);
 
+// Start initially assigned work
 router.put("/my-jobs/:complaintId/start", ...technicianAccess, startMyWork);
 
-// ==========================================
+// Start rework on a reopened complaint
+router.put(
+  "/my-jobs/:complaintId/start-rework",
+  ...technicianAccess,
+  startRework,
+);
+
+// Technician completes physical repair
+// Student YES/NO confirmation remains separate.
+router.put(
+  "/my-jobs/:complaintId/work-done",
+  ...technicianAccess,
+  markWorkDone,
+);
+
+// ======================================================
 // MAINTENANCE MANAGER ROUTES
-// ==========================================
+// ======================================================
 
 router.get("/complaints", ...managerAccess, getComplaintsForAssignment);
 
