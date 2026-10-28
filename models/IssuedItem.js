@@ -3,10 +3,9 @@ const mongoose = require("mongoose");
 const issuedItemSchema = new mongoose.Schema(
   {
     // ==========================================
-    // LEGACY REQUEST REFERENCE
+    // LEGACY REQUEST
     // ==========================================
 
-    // Old Store Manager records remain compatible.
     requestId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "Request",
@@ -14,7 +13,7 @@ const issuedItemSchema = new mongoose.Schema(
     },
 
     // ==========================================
-    // NEW MATERIAL REQUEST REFERENCE
+    // MATERIAL REQUEST
     // ==========================================
 
     materialRequest: {
@@ -43,7 +42,7 @@ const issuedItemSchema = new mongoose.Schema(
     },
 
     // ==========================================
-    // ITEM DETAILS
+    // INVENTORY DETAILS
     // ==========================================
 
     inventoryItem: {
@@ -74,7 +73,7 @@ const issuedItemSchema = new mongoose.Schema(
     quantity: {
       type: Number,
       required: true,
-      min: 0.01,
+      min: 0.001,
     },
 
     // ==========================================
@@ -97,25 +96,25 @@ const issuedItemSchema = new mongoose.Schema(
     // TECHNICIAN DETAILS
     // ==========================================
 
-    // Preserve existing string-based receiver.
     issuedTo: {
       type: String,
       required: true,
       trim: true,
     },
 
-    // Technician assigned to the complaint.
+    // Technician assigned to complaint
     assignedTechnician: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
     },
 
-    // Person who physically collected the item.
+    // Actual physical receiver
     receivedByTechnician: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
+      index: true,
     },
 
     technicianId: {
@@ -131,7 +130,7 @@ const issuedItemSchema = new mongoose.Schema(
     },
 
     // ==========================================
-    // ISSUE VOUCHER DETAILS
+    // ISSUE DETAILS
     // ==========================================
 
     voucherNo: {
@@ -168,11 +167,6 @@ const issuedItemSchema = new mongoose.Schema(
       default: "",
     },
 
-    // ==========================================
-    // MATERIAL ISSUE STATUS
-    // ==========================================
-
-    // Retain old statuses for existing data.
     status: {
       type: String,
       enum: ["Issued", "Delivered", "Out Of Stock", "Low Stock"],
@@ -180,13 +174,42 @@ const issuedItemSchema = new mongoose.Schema(
     },
 
     // ==========================================
-    // RETRIEVAL TRACKING
+    // TECHNICIAN RECEIVING STATUS
     // ==========================================
 
-    // Not every material requires retrieval.
-    // Example:
-    // Tube light replacement -> true
-    // Consumable PVC tape -> false
+    receivingStatus: {
+      type: String,
+      enum: ["AWAITING_CONFIRMATION", "CONFIRMED", "DISPUTED", "RESOLVED"],
+      default: "AWAITING_CONFIRMATION",
+      index: true,
+    },
+
+    receivedQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    shortageQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    receivingConfirmedAt: {
+      type: Date,
+      default: null,
+    },
+
+    receivingRemarks: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+
+    // ==========================================
+    // RETRIEVAL TRACKING
+    // ==========================================
 
     retrievalRequired: {
       type: Boolean,
@@ -240,6 +263,23 @@ const issuedItemSchema = new mongoose.Schema(
 // ==========================================
 
 issuedItemSchema.pre("validate", function () {
+  const issued = Number(this.quantity);
+  const received = Number(this.receivedQuantity || 0);
+  const shortage = Number(this.shortageQuantity || 0);
+
+  if (!Number.isFinite(received) || received < 0 || received > issued) {
+    this.invalidate(
+      "receivedQuantity",
+      "Received quantity must be between 0 and issued quantity.",
+    );
+  }
+
+  if (!Number.isFinite(shortage) || shortage < 0 || shortage > issued) {
+    this.invalidate("shortageQuantity", "Invalid shortage quantity.");
+  }
+
+  // Preserve retrieval validation.
+
   if (!this.retrievalRequired) {
     this.expectedRetrievalQty = 0;
     this.retrievedQuantity = 0;
@@ -253,7 +293,7 @@ issuedItemSchema.pre("validate", function () {
   if (!Number.isFinite(expected) || expected <= 0) {
     this.invalidate(
       "expectedRetrievalQty",
-      "Expected retrieval quantity must be greater than zero",
+      "Expected retrieval quantity must be greater than zero.",
     );
     return;
   }
@@ -261,7 +301,7 @@ issuedItemSchema.pre("validate", function () {
   if (!Number.isFinite(retrieved) || retrieved < 0 || retrieved > expected) {
     this.invalidate(
       "retrievedQuantity",
-      "Retrieved quantity must be between zero and expected quantity",
+      "Retrieved quantity must be between zero and expected quantity.",
     );
     return;
   }
@@ -279,13 +319,16 @@ issuedItemSchema.pre("validate", function () {
 // INDEXES
 // ==========================================
 
-issuedItemSchema.index({
-  issuedDate: -1,
-});
+issuedItemSchema.index({ issuedDate: -1 });
 
 issuedItemSchema.index({
   assignedTechnician: 1,
   retrievalStatus: 1,
+});
+
+issuedItemSchema.index({
+  receivedByTechnician: 1,
+  receivingStatus: 1,
 });
 
 issuedItemSchema.index({

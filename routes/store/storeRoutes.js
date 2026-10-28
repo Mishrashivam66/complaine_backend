@@ -4,6 +4,10 @@ const router = express.Router();
 const { protect } = require("../../middleware/authMiddleware");
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
+// ==========================================
+// EXISTING STORE ROUTES
+// ==========================================
+
 const dashboardRoutes = require("./dashboardRoutes");
 const inventoryRoutes = require("./inventoryRoutes");
 const addInventoryRoutes = require("./addInventoryRoutes");
@@ -13,25 +17,31 @@ const requestRoutes = require("./requestRoutes");
 const issuedItemRoutes = require("./issuedItemRoutes");
 const damagedItemRoutes = require("./damagedItemRoutes");
 const retrievedItemRoutes = require("./retrievedItemRoutes");
-// NEW: Stock Inward & Excel Import
 const stockInwardRoutes = require("./stockInwardRoutes");
 
-// Authentication
+// ==========================================
+// NEW MATERIAL RECEIVING CONTROLLER
+// ==========================================
+
+const materialReceivingController = require("../../controllers/store/materialReceivingController");
+
+// ==========================================
+// ALL ROUTES REQUIRE AUTHENTICATION
+// ==========================================
+
 router.use(protect);
 
 // ==========================================
-// DASHBOARD
+// STORE MANAGER DASHBOARD
 // ==========================================
 
 router.use("/dashboard", roleMiddleware("STORE_MANAGER"), dashboardRoutes);
 
 // ==========================================
-// INVENTORY
+// INVENTORY MANAGEMENT
 // ==========================================
 
 router.use("/inventory", roleMiddleware("STORE_MANAGER"), inventoryRoutes);
-// must cover this route as well.
-router.use("/retrieved-items", retrievedItemRoutes);
 
 router.use(
   "/add-inventory",
@@ -40,16 +50,12 @@ router.use(
 );
 
 // ==========================================
-// STOCK
+// STOCK OPERATIONS
 // ==========================================
 
 router.use("/stock", roleMiddleware("STORE_MANAGER"), stockRoutes);
 
 router.use("/low-stock", roleMiddleware("STORE_MANAGER"), lowStockRoutes);
-
-// ==========================================
-// NEW: STOCK INWARD
-// ==========================================
 
 router.use("/stock-inward", roleMiddleware("STORE_MANAGER"), stockInwardRoutes);
 
@@ -57,22 +63,69 @@ router.use("/stock-inward", roleMiddleware("STORE_MANAGER"), stockInwardRoutes);
 // MATERIAL REQUESTS
 // ==========================================
 
+// Store Manager reviews/approves requests.
+// Request creation by Manager/Technician can use
+// its existing separately authorized routes.
 router.use("/requests", requestRoutes);
 
 // ==========================================
 // MATERIAL ISSUE
 // ==========================================
 
-router.use("/issued-items", issuedItemRoutes);
+router.use("/issued-items", roleMiddleware("STORE_MANAGER"), issuedItemRoutes);
 
 // ==========================================
-// RETRIEVED ITEMS (LEGACY ROUTE)
+// RETRIEVED MATERIALS
+// ==========================================
+
+router.use(
+  "/retrieved-items",
+  roleMiddleware("STORE_MANAGER"),
+  retrievedItemRoutes,
+);
+
+// ==========================================
+// LEGACY DAMAGED ITEMS
 // ==========================================
 
 router.use(
   "/damaged-items",
   roleMiddleware("STORE_MANAGER"),
   damagedItemRoutes,
+);
+
+// ==========================================
+// TECHNICIAN MATERIAL RECEIVING
+// ==========================================
+
+// Only the authenticated Technician can view
+// materials assigned to their account.
+
+router.get(
+  "/material-receiving/my-materials",
+  roleMiddleware("WORKER"),
+  materialReceivingController.getMyMaterials,
+);
+
+// Technician confirms physically received quantity.
+
+router.post(
+  "/material-receiving/confirm",
+  roleMiddleware("WORKER"),
+  materialReceivingController.confirmReceiving,
+);
+
+// ==========================================
+// STORE MANAGER RECEIVING AUDIT
+// ==========================================
+
+// Store Manager can view confirmations,
+// differences and disputed quantities.
+
+router.get(
+  "/material-receiving/all",
+  roleMiddleware("STORE_MANAGER"),
+  materialReceivingController.getAllReceiving,
 );
 
 module.exports = router;
