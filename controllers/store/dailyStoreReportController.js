@@ -943,7 +943,7 @@ async function writeExcel(res, report) {
 
         row.values = [undefined, ...values];
 
-        row.height = 28;
+        row.height = 34;
 
         row.eachCell({ includeEmpty: true }, (cell, colIndex) => {
           cell.font = {
@@ -965,7 +965,7 @@ async function writeExcel(res, report) {
             vertical: "middle",
             horizontal: typeof cell.value === "number" ? "right" : "left",
             wrapText: false,
-            shrinkToFit: true,
+            shrinkToFit: false,
             indent: typeof cell.value === "number" ? 0 : 1,
           };
 
