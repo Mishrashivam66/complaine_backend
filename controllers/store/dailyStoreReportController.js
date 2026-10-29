@@ -556,74 +556,68 @@ async function writeExcel(res, report) {
   workbook.lastModifiedBy = "University Store Department";
   workbook.created = new Date();
   workbook.modified = new Date();
-  workbook.subject = "Daily Store Transaction Report";
-  workbook.title = `AMI Daily Store Report - ${report.date}`;
-  workbook.company = "Amity University Madhya Pradesh";
+  workbook.title = `Daily Store Report - ${report.date}`;
+  workbook.subject = "University Store Daily Transactions";
 
-  const NAVY = "001B54";
-  const DARK_NAVY = "061E42";
-  const GOLD = "D4AD58";
-  const WHITE = "FFFFFF";
-  const LIGHT_BLUE = "EEF4FC";
-  const LIGHT_GOLD = "FFF8E8";
-  const TEXT = "253653";
-  const MUTED = "64748B";
-  const BORDER = "DDE5EF";
-  const GREEN = "047857";
-  const RED = "B91C1C";
+  // ==========================================
+  // COLOURS
+  // ==========================================
+
+  const C = {
+    navy: "FF001B54",
+    dark: "FF071D42",
+    gold: "FFE5C575",
+    paleGold: "FFFFF5DF",
+    paleBlue: "FFEAF1FB",
+    lightBlue: "FFF4F8FD",
+    white: "FFFFFFFF",
+    text: "FF243047",
+    muted: "FF64748B",
+    border: "FFDCE5EF",
+    green: "FF047857",
+    greenBg: "FFE7F7EF",
+    red: "FFB91C1C",
+    redBg: "FFFFEDED",
+    amber: "FF9A6700",
+  };
 
   const sections = excelRows(report);
 
-  const columnWidths = {
-    "Item Code": 39,
-    "Item Description": 34,
-    Material: 31,
-    "GRN No": 26,
-    "Inward No": 32,
-    "Voucher No": 34,
-    "Store Slip": 34,
-    "Original Voucher": 34,
-    "Complaint ID": 30,
-    "Bill No": 22,
-    Vendor: 27,
-    "Received From": 27,
-    "Received By": 27,
-    "Issued To": 27,
-    "Issued By": 27,
-    Technician: 27,
-    "Recorded By": 27,
-    "Performed By": 27,
-    Remarks: 36,
-    "Receiving Status": 27,
-    Status: 23,
-    "Receipt Date": 25,
-    "Issue Date": 25,
-    "Received Date": 25,
-    "Transaction Date": 25,
-    "Confirmation Date": 25,
-    "Opening (first ledger event)": 26,
-    "Closing (last ledger event)": 26,
-    Metric: 38,
-    Value: 25,
+  const labelMap = {
+    "Daily Summary": "DAILY STORE SUMMARY",
+    "Stock Inward": "STOCK INWARD / GRN REGISTER",
+    "Material Issues": "MATERIAL ISSUE REGISTER",
+    "Technician Receiving": "TECHNICIAN RECEIVING REGISTER",
+    "Retrieved Materials": "RETRIEVED MATERIAL REGISTER",
+    "Stock Ledger": "STOCK TRANSACTION LEDGER",
+    "Item Movements": "ITEM-WISE STOCK MOVEMENT",
   };
 
-  const formatSheetTitle = (sheetName) => {
-    const labels = {
-      "Daily Summary": "DAILY STORE SUMMARY",
-      "Stock Inward": "STOCK INWARD / GRN REGISTER",
-      "Material Issues": "MATERIAL ISSUE REGISTER",
-      "Technician Receiving": "TECHNICIAN RECEIVING REGISTER",
-      "Retrieved Materials": "RETRIEVED MATERIAL REGISTER",
-      "Stock Ledger": "STOCK TRANSACTION LEDGER",
-      "Item Movements": "ITEM-WISE STOCK MOVEMENT",
-    };
+  // ==========================================
+  // HELPERS
+  // ==========================================
 
-    return labels[sheetName] || sheetName.toUpperCase();
-  };
+  const fill = (color) => ({
+    type: "pattern",
+    pattern: "solid",
+    fgColor: { argb: color },
+  });
 
-  // Prevent spreadsheet formula injection from
-  // externally supplied vendor/material/remarks text.
-  const safeCellValue = (value) => {
+  const font = (size = 11, color = C.text, bold = false) => ({
+    name: "Aptos",
+    size,
+    bold,
+    color: { argb: color },
+  });
+
+  const border = () => ({
+    bottom: {
+      style: "hair",
+      color: { argb: C.border },
+    },
+  });
+
+  const safeValue = (value) => {
     if (value === null || value === undefined) {
       return "";
     }
@@ -638,6 +632,8 @@ async function writeExcel(res, report) {
 
     const stringValue = String(value);
 
+    // Prevent formula injection from material,
+    // vendor and remarks text.
     if (/^\s*[=+\-@\t\r]/.test(stringValue)) {
       return `'${stringValue}`;
     }
@@ -645,436 +641,646 @@ async function writeExcel(res, report) {
     return stringValue;
   };
 
-  const quantityColumns = new Set([
+  const widthFor = (header) => {
+    const widths = {
+      "Item Code": 42,
+      "Item Description": 34,
+      Material: 34,
+      "Voucher No": 39,
+      "Store Slip": 39,
+      "Original Voucher": 39,
+      "Inward No": 34,
+      "GRN No": 30,
+      "Bill No": 26,
+      "Complaint ID": 32,
+      Reference: 38,
+      Vendor: 30,
+      "Issued To": 28,
+      "Issued By": 28,
+      "Received From": 28,
+      "Received By": 28,
+      "Performed By": 28,
+      "Recorded By": 28,
+      Technician: 28,
+      Remarks: 38,
+      "Receiving Status": 29,
+      Status: 23,
+      Condition: 22,
+      UOM: 15,
+      Category: 25,
+      "Issue Date": 27,
+      "Receipt Date": 27,
+      "Received Date": 27,
+      "Transaction Date": 28,
+      "Confirmation Date": 28,
+      "Opening (first ledger event)": 28,
+      "Closing (last ledger event)": 28,
+      "Balance Before": 20,
+      "Balance After": 20,
+      "Stock Before": 20,
+      "Stock After": 20,
+      "Received Qty": 20,
+      "Issued Qty": 20,
+      "Adjustment In": 20,
+      "Adjustment Out": 20,
+    };
+
+    return widths[header] || 20;
+  };
+
+  const numberHeaders = new Set([
     "Received Qty",
     "Issued Qty",
     "Stock Before",
     "Stock After",
-    "Opening (first ledger event)",
-    "Closing (last ledger event)",
     "Quantity",
     "Issued",
     "Received",
     "Shortage",
     "Balance Before",
     "Balance After",
+    "Opening (first ledger event)",
+    "Closing (last ledger event)",
     "Inward",
     "Returned",
     "Adjustment In",
     "Adjustment Out",
-    "Adjustment Out",
   ]);
 
-  for (const [sheetName, dataRows] of Object.entries(sections)) {
-    const sheet = workbook.addWorksheet(sheetName, {
-      views: [
-        {
-          state: "frozen",
-          ySplit: 7,
-          showGridLines: false,
-        },
-      ],
-      pageSetup: {
-        paperSize: 9,
-        orientation: sheetName === "Daily Summary" ? "portrait" : "landscape",
-        fitToPage: true,
-        fitToWidth: 1,
-        fitToHeight: 0,
-        margins: {
-          left: 0.3,
-          right: 0.3,
-          top: 0.5,
-          bottom: 0.5,
-          header: 0.2,
-          footer: 0.2,
-        },
+  function mergeBand(ws, rowNumber, endColumn, value, options = {}) {
+    ws.mergeCells(rowNumber, 1, rowNumber, endColumn);
+
+    const cell = ws.getCell(rowNumber, 1);
+
+    cell.value = value;
+    cell.font = font(
+      options.size || 11,
+      options.color || C.navy,
+      options.bold ?? true,
+    );
+
+    cell.fill = fill(options.background || C.white);
+
+    cell.alignment = {
+      horizontal: "center",
+      vertical: "middle",
+      wrapText: true,
+    };
+
+    ws.getRow(rowNumber).height = options.height || 29;
+  }
+
+  function setupSheet(ws, columnCount) {
+    ws.views = [
+      {
+        state: "frozen",
+        xSplit: 0,
+        ySplit: 7,
+        showGridLines: false,
       },
-      properties: {
-        defaultRowHeight: 20,
+    ];
+
+    ws.pageSetup.paperSize = 9;
+    ws.pageSetup.orientation = columnCount > 6 ? "landscape" : "portrait";
+
+    ws.pageSetup.fitToPage = true;
+    ws.pageSetup.fitToWidth = 1;
+    ws.pageSetup.fitToHeight = 0;
+
+    ws.pageSetup.margins = {
+      left: 0.3,
+      right: 0.3,
+      top: 0.5,
+      bottom: 0.5,
+      header: 0.2,
+      footer: 0.2,
+    };
+
+    ws.pageSetup.printTitlesRow = "1:7";
+
+    ws.headerFooter.oddFooter =
+      "AMI MAINTENANCE  |  UNIVERSITY STORE  |  Page &P of &N";
+
+    ws.properties.tabColor = {
+      argb: C.navy,
+    };
+  }
+
+  // ==========================================
+  // PROFESSIONAL SUMMARY SHEET
+  // ==========================================
+
+  {
+    const ws = workbook.addWorksheet("Daily Summary");
+
+    ws.properties.tabColor = {
+      argb: C.gold,
+    };
+
+    ws.views = [
+      {
+        state: "frozen",
+        ySplit: 6,
+        showGridLines: false,
       },
+    ];
+
+    const summary = report.summary || {};
+
+    const summaryColumns = 8;
+
+    for (let i = 1; i <= summaryColumns; i++) {
+      ws.getColumn(i).width = 21;
+    }
+
+    mergeBand(ws, 1, 8, "AMI MAINTENANCE", {
+      size: 23,
+      color: C.white,
+      background: C.dark,
+      height: 48,
     });
+
+    mergeBand(ws, 2, 8, "AMITY UNIVERSITY MADHYA PRADESH", {
+      size: 12,
+      background: C.paleGold,
+      height: 30,
+    });
+
+    mergeBand(ws, 3, 8, "UNIVERSITY STORE DEPARTMENT", {
+      size: 11,
+      color: C.gold,
+      background: C.navy,
+      height: 27,
+    });
+
+    mergeBand(ws, 4, 8, "DAILY STORE TRANSACTION REPORT", {
+      size: 16,
+      background: C.paleBlue,
+      height: 38,
+    });
+
+    mergeBand(ws, 5, 8, `REPORT DATE: ${report.date}   |   TIME ZONE: IST`, {
+      size: 11,
+      background: C.paleGold,
+      height: 31,
+    });
+
+    ws.getRow(6).height = 19;
+
+    // ========================================
+    // SUMMARY CARD HELPER
+    // ========================================
+
+    function summaryCard(
+      startRow,
+      startCol,
+      endCol,
+      title,
+      value,
+      accent = C.navy,
+    ) {
+      ws.mergeCells(startRow, startCol, startRow, endCol);
+
+      ws.mergeCells(startRow + 1, startCol, startRow + 2, endCol);
+
+      const titleCell = ws.getCell(startRow, startCol);
+
+      titleCell.value = title.toUpperCase();
+
+      titleCell.font = font(10, C.white, true);
+      titleCell.fill = fill(accent);
+
+      titleCell.alignment = {
+        horizontal: "center",
+        vertical: "middle",
+      };
+
+      const valueCell = ws.getCell(startRow + 1, startCol);
+
+      valueCell.value = Number(value || 0);
+      valueCell.font = font(25, accent, true);
+      valueCell.fill = fill(C.lightBlue);
+
+      valueCell.alignment = {
+        horizontal: "center",
+        vertical: "middle",
+      };
+
+      ws.getRow(startRow).height = 30;
+      ws.getRow(startRow + 1).height = 23;
+      ws.getRow(startRow + 2).height = 22;
+    }
+
+    summaryCard(7, 1, 2, "Stock Inward", summary.stockInwardEntries, C.green);
+
+    summaryCard(
+      7,
+      4,
+      5,
+      "Material Issues",
+      summary.materialIssueEntries,
+      C.navy,
+    );
+
+    summaryCard(
+      7,
+      7,
+      8,
+      "Technician Receiving",
+      summary.technicianReceivingEntries,
+      C.green,
+    );
+
+    summaryCard(
+      12,
+      1,
+      2,
+      "Retrieved Materials",
+      summary.retrievedEntries,
+      C.navy,
+    );
+
+    summaryCard(
+      12,
+      4,
+      5,
+      "Receiving Disputes",
+      summary.disputedReceiving,
+      C.red,
+    );
+
+    summaryCard(
+      12,
+      7,
+      8,
+      "Stock Transactions",
+      summary.stockTransactionEntries,
+      C.navy,
+    );
+
+    ws.getRow(10).height = 12;
+    ws.getRow(11).height = 12;
+
+    ws.getRow(15).height = 15;
+
+    // ========================================
+    // UOM-WISE MOVEMENT SECTION
+    // ========================================
+
+    mergeBand(ws, 16, 8, "MATERIAL MOVEMENT SUMMARY — UNIT WISE", {
+      size: 13,
+      color: C.white,
+      background: C.navy,
+      height: 36,
+    });
+
+    const movementGroups = [
+      ["Stock Inward", summary.inwardByUnit || []],
+      ["Material Issued", summary.issuedByUnit || []],
+      ["Usable Stock Return", summary.returnByUnit || []],
+      ["Damaged Retrieval", summary.retrievedByUnit || []],
+    ];
+
+    const movementRows = movementGroups.flatMap(([type, items]) =>
+      items.length
+        ? items.map((item) => ({
+            movement: type,
+            unit: item.unit,
+            quantity: Number(item.quantity || 0),
+          }))
+        : [
+            {
+              movement: type,
+              unit: "—",
+              quantity: 0,
+            },
+          ],
+    );
+
+    // Three large merged columns.
+    ws.mergeCells("A18:C18");
+    ws.mergeCells("D18:E18");
+    ws.mergeCells("F18:H18");
+
+    const movementHeader = [
+      [1, "MOVEMENT TYPE"],
+      [4, "UOM"],
+      [6, "QUANTITY"],
+    ];
+
+    movementHeader.forEach(([col, title]) => {
+      const cell = ws.getCell(18, col);
+      cell.value = title;
+      cell.fill = fill(C.navy);
+      cell.font = font(11, C.white, true);
+      cell.alignment = {
+        vertical: "middle",
+        horizontal: "center",
+      };
+    });
+
+    ws.getRow(18).height = 34;
+
+    movementRows.forEach((item, index) => {
+      const rowNo = 19 + index;
+
+      ws.mergeCells(rowNo, 1, rowNo, 3);
+      ws.mergeCells(rowNo, 4, rowNo, 5);
+      ws.mergeCells(rowNo, 6, rowNo, 8);
+
+      const values = [
+        [1, item.movement],
+        [4, item.unit],
+        [6, item.quantity],
+      ];
+
+      values.forEach(([col, value]) => {
+        const cell = ws.getCell(rowNo, col);
+
+        cell.value = value;
+        cell.fill = fill(index % 2 === 0 ? C.white : C.lightBlue);
+
+        cell.font = font(11, C.text, col === 1);
+
+        cell.alignment = {
+          vertical: "middle",
+          horizontal: col === 6 ? "right" : "center",
+        };
+
+        cell.border = border();
+
+        if (col === 6) {
+          cell.numFmt = "#,##0.###";
+        }
+      });
+
+      ws.getRow(rowNo).height = 32;
+    });
+
+    const noteRow = 21 + movementRows.length;
+
+    mergeBand(
+      ws,
+      noteRow,
+      8,
+      "Note: Quantities with different UOMs are reported separately. Damaged materials do not increase usable stock.",
+      {
+        size: 10,
+        bold: false,
+        color: C.muted,
+        background: C.paleGold,
+        height: 42,
+      },
+    );
+
+    ws.pageSetup.paperSize = 9;
+    ws.pageSetup.orientation = "landscape";
+    ws.pageSetup.fitToPage = true;
+    ws.pageSetup.fitToWidth = 1;
+    ws.pageSetup.fitToHeight = 1;
+
+    ws.pageSetup.printArea = `A1:H${noteRow}`;
+
+    ws.headerFooter.oddFooter =
+      "AMI MAINTENANCE  |  DAILY SUMMARY  |  Page &P of &N";
+  }
+
+  // ==========================================
+  // SIX DETAILED REGISTER SHEETS
+  // ==========================================
+
+  for (const [sheetName, records] of Object.entries(sections)) {
+    if (sheetName === "Daily Summary") {
+      continue;
+    }
 
     const headers = titles[sheetName];
 
-    const columnCount = headers.length;
-
-    const lastColumn = sheet.getColumn(columnCount).letter;
-
-    // ======================================
-    // COLUMN WIDTHS
-    // ======================================
-
-    headers.forEach((header, index) => {
-      let width = columnWidths[header] || 20;
-
-      if (header === "UOM") width = 12;
-
-      if (["Type", "Source", "Condition"].includes(header)) {
-        width = 18;
-      }
-
-      if (
-        [
-          "Quantity",
-          "Issued",
-          "Received",
-          "Shortage",
-          "Inward",
-          "Returned",
-          "Adjustment In",
-          "Adjustment Out",
-          "Stock Before",
-          "Stock After",
-          "Balance Before",
-          "Balance After",
-        ].includes(header)
-      ) {
-        width = 19;
-      }
-
-      sheet.getColumn(index + 1).width = width;
-    });
-
-    // ======================================
-    // UNIVERSITY HEADER
-    // ======================================
-
-    sheet.mergeCells(`A1:${lastColumn}2`);
-
-    const titleCell = sheet.getCell("A1");
-
-    titleCell.value = "AMI MAINTENANCE";
-
-    titleCell.font = {
-      name: "Aptos Display",
-      size: 23,
-      bold: true,
-      color: { argb: WHITE },
-    };
-
-    titleCell.alignment = {
-      horizontal: "center",
-      vertical: "middle",
-    };
-
-    titleCell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: DARK_NAVY },
-    };
-
-    sheet.getRow(1).height = 25;
-    sheet.getRow(2).height = 28;
-
-    // Fill entire header background.
-    for (let col = 1; col <= columnCount; col++) {
-      for (let row = 1; row <= 2; row++) {
-        sheet.getCell(row, col).fill = {
-          type: "pattern",
-          pattern: "solid",
-          fgColor: { argb: DARK_NAVY },
-        };
-      }
+    if (!headers?.length) {
+      continue;
     }
 
-    sheet.mergeCells(`A3:${lastColumn}3`);
+    const ws = workbook.addWorksheet(sheetName);
 
-    const departmentCell = sheet.getCell("A3");
+    const columnCount = headers.length;
 
-    departmentCell.value =
-      "AMITY UNIVERSITY MADHYA PRADESH  |  UNIVERSITY STORE DEPARTMENT";
+    setupSheet(ws, columnCount);
 
-    departmentCell.font = {
-      name: "Aptos",
+    // ========================================
+    // COLUMNS
+    // ========================================
+
+    headers.forEach((header, index) => {
+      ws.getColumn(index + 1).width = widthFor(header);
+    });
+
+    // ========================================
+    // UNIVERSITY HEADER
+    // ========================================
+
+    mergeBand(ws, 1, columnCount, "AMI MAINTENANCE", {
+      size: 22,
+      color: C.white,
+      background: C.dark,
+      height: 48,
+    });
+
+    mergeBand(ws, 2, columnCount, "AMITY UNIVERSITY MADHYA PRADESH", {
+      size: 12,
+      background: C.paleGold,
+      height: 30,
+    });
+
+    mergeBand(ws, 3, columnCount, "UNIVERSITY STORE DEPARTMENT", {
       size: 11,
-      bold: true,
-      color: { argb: NAVY },
-    };
+      color: C.gold,
+      background: C.navy,
+      height: 28,
+    });
 
-    departmentCell.alignment = {
-      horizontal: "center",
-      vertical: "middle",
-    };
+    mergeBand(ws, 4, columnCount, labelMap[sheetName] || sheetName, {
+      size: 16,
+      background: C.paleBlue,
+      height: 38,
+    });
 
-    departmentCell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: "F5E7C5" },
-    };
-
-    sheet.getRow(3).height = 30;
-
-    // ======================================
-    // REPORT TITLE
-    // ======================================
-
-    sheet.mergeCells(`A4:${lastColumn}4`);
-
-    const reportTitle = sheet.getCell("A4");
-
-    reportTitle.value = formatSheetTitle(sheetName);
-
-    reportTitle.font = {
-      name: "Aptos Display",
-      size: 15,
-      bold: true,
-      color: { argb: NAVY },
-    };
-
-    reportTitle.alignment = {
-      horizontal: "center",
-      vertical: "middle",
-    };
-
-    reportTitle.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: LIGHT_BLUE },
-    };
-
-    sheet.getRow(4).height = 34;
-
-    // ======================================
-    // REPORT DATE
-    // ======================================
-
-    sheet.mergeCells(`A5:${lastColumn}5`);
-
-    const dateCell = sheet.getCell("A5");
-
-    dateCell.value = `REPORT DATE: ${report.date}   |   TIME ZONE: IST   |   GENERATED BY AMI MAINTENANCE`;
-
-    dateCell.font = {
-      name: "Aptos",
-      size: 10,
-      bold: true,
-      color: { argb: TEXT },
-    };
-
-    dateCell.alignment = {
-      horizontal: "center",
-      vertical: "middle",
-    };
-
-    dateCell.fill = {
-      type: "pattern",
-      pattern: "solid",
-      fgColor: { argb: LIGHT_GOLD },
-    };
-
-    sheet.getRow(5).height = 27;
-
-    // Empty separator row
-    sheet.getRow(6).height = 12;
-
-    // ======================================
-    // TABLE HEADERS
-    // ======================================
-
-    const headerRow = sheet.getRow(7);
-
-    headerRow.values = [undefined, ...headers];
-
-    headerRow.height = 34;
-
-    headerRow.eachCell((cell) => {
-      cell.font = {
-        name: "Aptos",
-        bold: true,
+    mergeBand(
+      ws,
+      5,
+      columnCount,
+      `REPORT DATE: ${report.date}   |   TIME ZONE: IST`,
+      {
         size: 11,
-        color: { argb: WHITE },
-      };
+        background: C.paleGold,
+        height: 30,
+      },
+    );
 
-      cell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: NAVY },
-      };
+    ws.getRow(6).height = 14;
+
+    // ========================================
+    // TABLE HEADERS
+    // ========================================
+
+    const headerRow = ws.getRow(7);
+
+    headerRow.height = 46;
+
+    headers.forEach((header, index) => {
+      const cell = headerRow.getCell(index + 1);
+
+      cell.value = header;
+
+      cell.font = font(11, C.white, true);
+      cell.fill = fill(C.navy);
 
       cell.alignment = {
         horizontal: "center",
         vertical: "middle",
         wrapText: true,
+        shrinkToFit: false,
       };
 
       cell.border = {
         bottom: {
           style: "medium",
-          color: { argb: GOLD },
+          color: { argb: C.gold },
         },
       };
     });
 
-    // ======================================
+    // ========================================
     // DATA ROWS
-    // ======================================
+    // ========================================
 
-    if (!dataRows.length) {
-      sheet.mergeCells(`A8:${lastColumn}8`);
+    if (!records.length) {
+      ws.mergeCells(8, 1, 8, columnCount);
 
-      const emptyCell = sheet.getCell("A8");
+      const cell = ws.getCell(8, 1);
 
-      emptyCell.value = "No transactions recorded for the selected date.";
+      cell.value = "No transactions recorded for the selected date.";
 
-      emptyCell.font = {
-        name: "Aptos",
-        size: 11,
-        italic: true,
-        color: { argb: MUTED },
-      };
+      cell.font = font(11, C.muted, false);
+      cell.fill = fill(C.lightBlue);
 
-      emptyCell.alignment = {
+      cell.alignment = {
         horizontal: "center",
         vertical: "middle",
       };
 
-      emptyCell.fill = {
-        type: "pattern",
-        pattern: "solid",
-        fgColor: { argb: "F8FAFC" },
-      };
-
-      sheet.getRow(8).height = 32;
+      ws.getRow(8).height = 38;
     } else {
-      dataRows.forEach((data, rowIndex) => {
-        const row = sheet.getRow(rowIndex + 8);
+      records.forEach((record, index) => {
+        const rowNumber = 8 + index;
+        const row = ws.getRow(rowNumber);
 
-        const values = headers.map((header) => safeCellValue(data[header]));
+        row.height = 42;
 
-        row.values = [undefined, ...values];
+        headers.forEach((header, colIndex) => {
+          const cell = row.getCell(colIndex + 1);
 
-        row.height = 34;
+          cell.value = safeValue(record[header]);
 
-        row.eachCell({ includeEmpty: true }, (cell, colIndex) => {
-          cell.font = {
-            name: "Aptos",
-            size: 10,
-            color: { argb: TEXT },
-            bold: colIndex === 1 && sheetName === "Daily Summary",
-          };
+          cell.font = font(11, C.text, false);
 
-          cell.fill = {
-            type: "pattern",
-            pattern: "solid",
-            fgColor: {
-              argb: rowIndex % 2 === 0 ? WHITE : "F3F7FD",
-            },
-          };
+          cell.fill = fill(index % 2 === 0 ? C.white : C.lightBlue);
+
+          cell.border = border();
 
           cell.alignment = {
             vertical: "middle",
             horizontal: typeof cell.value === "number" ? "right" : "left",
-            wrapText: false,
+            wrapText: true,
             shrinkToFit: false,
             indent: typeof cell.value === "number" ? 0 : 1,
           };
 
-          cell.border = {
-            bottom: {
-              style: "hair",
-              color: { argb: BORDER },
-            },
-          };
-
-          const header = headers[colIndex - 1];
-
-          if (
-            typeof cell.value === "number" &&
-            (quantityColumns.has(header) || header === "Value")
-          ) {
+          if (typeof cell.value === "number" && numberHeaders.has(header)) {
             cell.numFmt = "#,##0.###";
           }
 
-          // Status colour
-          if (["Status", "Receiving Status"].includes(header)) {
+          // Long codes remain full-length text.
+          if (
+            [
+              "Item Code",
+              "Voucher No",
+              "Store Slip",
+              "Inward No",
+              "GRN No",
+              "Reference",
+              "Original Voucher",
+            ].includes(header)
+          ) {
+            cell.numFmt = "@";
+
+            cell.font = font(10, C.navy, true);
+          }
+
+          // Status colouring
+          if (header === "Status" || header === "Receiving Status") {
             const status = String(cell.value || "").toUpperCase();
 
             if (status.includes("CONFIRMED") || status === "RESOLVED") {
-              cell.font = {
-                name: "Aptos",
-                size: 10,
-                bold: true,
-                color: { argb: GREEN },
-              };
+              cell.font = font(11, C.green, true);
+              cell.fill = fill(C.greenBg);
             } else if (
               status.includes("DISPUTED") ||
               status.includes("SHORTAGE")
             ) {
-              cell.font = {
-                name: "Aptos",
-                size: 10,
-                bold: true,
-                color: { argb: RED },
-              };
+              cell.font = font(11, C.red, true);
+              cell.fill = fill(C.redBg);
+            } else {
+              cell.font = font(10, C.amber, true);
             }
           }
 
-          // Movement types
           if (header === "Type") {
             const type = String(cell.value || "").toUpperCase();
 
-            cell.font = {
-              name: "Aptos",
-              size: 10,
-              bold: true,
-              color: {
-                argb:
-                  type === "INWARD" || type === "RETURN"
-                    ? GREEN
-                    : type === "ISSUE"
-                      ? RED
-                      : NAVY,
-              },
-            };
+            cell.font = font(
+              11,
+              type === "INWARD" || type === "RETURN"
+                ? C.green
+                : type === "ISSUE"
+                  ? C.red
+                  : C.navy,
+              true,
+            );
           }
         });
       });
-    }
 
-    // ======================================
-    // FILTERS
-    // ======================================
+      // ======================================
+      // AUTO FILTER
+      // ======================================
 
-    if (dataRows.length) {
-      sheet.autoFilter = {
+      ws.autoFilter = {
         from: {
           row: 7,
           column: 1,
         },
         to: {
-          row: dataRows.length + 7,
+          row: records.length + 7,
           column: columnCount,
         },
       };
     }
 
-    // ======================================
-    // PRINT SETTINGS
-    // ======================================
+    // ========================================
+    // PRINT CONFIGURATION
+    // ========================================
 
-    sheet.headerFooter.oddFooter =
-      "AMI MAINTENANCE  |  UNIVERSITY STORE DEPARTMENT  |  Page &P of &N";
+    const lastColumn = ws.getColumn(columnCount).letter;
 
-    sheet.printOptions = {
-      horizontalCentered: true,
-    };
-
-    sheet.pageSetup.printTitlesRow = "1:7";
-
-    sheet.pageSetup.printArea = `A1:${lastColumn}${Math.max(8, dataRows.length + 7)}`;
-
-    // ======================================
-    // TAB COLOURS
-    // ======================================
-
-    sheet.properties.tabColor = {
-      argb: sheetName === "Daily Summary" ? GOLD : NAVY,
-    };
+    ws.pageSetup.printArea = `A1:${lastColumn}${Math.max(
+      8,
+      records.length + 7,
+    )}`;
   }
 
-  // ========================================
-  // GENERATE XLSX
-  // ========================================
+  // ==========================================
+  // SEND EXCEL FILE
+  // ==========================================
 
   const buffer = await workbook.xlsx.writeBuffer();
 
