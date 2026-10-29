@@ -4,6 +4,10 @@ const router = express.Router();
 const { protect } = require("../../middleware/authMiddleware");
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
+// ==========================================
+// EXISTING REPORT CONTROLLER
+// ==========================================
+
 const {
   getDailySummary,
   getStockTransactions,
@@ -14,28 +18,52 @@ const {
   getReceiptDetails,
 } = require("../../controllers/store/storeReportController");
 
+// ==========================================
+// NEW CONSOLIDATED DAILY CONTROLLER
+// ==========================================
+
+const {
+  getDailyReport,
+  exportDailyReport,
+} = require("../../controllers/store/dailyStoreReportController");
+
+// ==========================================
+// AUTHENTICATION
+// ==========================================
+
 router.use(protect);
 router.use(roleMiddleware("STORE_MANAGER"));
 
-// REPORT DASHBOARD
+// ==========================================
+// COMPLETE DAILY REPORT
+// ==========================================
+
+// JSON containing all daily records
+router.get("/daily", getDailyReport);
+
+// PDF and Excel downloads
+router.get("/daily/export", exportDailyReport);
+
+// ==========================================
+// EXISTING REPORTS
+// ==========================================
+
 router.get("/summary", getDailySummary);
 
-// STOCK MOVEMENT REGISTER
 router.get("/transactions", getStockTransactions);
 
-// GOODS RECEIPT REGISTER
 router.get("/inward", getStockInwardReport);
 
-// MATERIAL ISSUE REGISTER
 router.get("/issues", getMaterialIssueReport);
 
-// TECHNICIAN RECEIVING REGISTER
 router.get("/receiving", getTechnicianReceivingReport);
 
-// DAMAGED / RETRIEVED MATERIAL REGISTER
 router.get("/retrieved", getRetrievedMaterialsReport);
 
-// SINGLE DOCUMENT DETAILS FOR RECEIPT PRINTING
+// ==========================================
+// INDIVIDUAL RECEIPTS
+// ==========================================
+
 router.get("/receipt/:type/:id", getReceiptDetails);
 
 module.exports = router;
