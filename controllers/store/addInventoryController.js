@@ -1,233 +1,75 @@
-const Inventory = require("../../models/Inventory");
+"use strict";
+
+// ==========================================
+// AMI MAINTENANCE
+// LEGACY INVENTORY CONTROLLER COMPATIBILITY
+// ==========================================
+//
+// Existing endpoints and controller exports
+// are preserved.
+//
+// Inventory operations are handled by the
+// central inventoryController to avoid
+// inconsistent stock and item-code behavior.
+//
+// ==========================================
+
+const inventoryController = require("./inventoryController");
 
 // ==========================================
 // ADD INVENTORY
 // ==========================================
 
+// Legacy direct stock creation is disabled.
+// All new physical stock should arrive through
+// Stock Inward (manual / Excel), where the
+// transaction history and GRN can be recorded.
+
 exports.addInventory = async (req, res) => {
-  try {
-    const { itemName, category, otherCategory, quantity, minimumStock, unit } =
-      req.body;
-
-    // ==========================================
-    // VALIDATION
-    // ==========================================
-
-    if (!itemName || !category || !quantity || !minimumStock || !unit) {
-      return res.status(400).json({
-        success: false,
-
-        message: "All fields are required",
-      });
-    }
-
-    // ==========================================
-    // CHECK EXISTING ITEM
-    // ==========================================
-
-    const existingItem = await Inventory.findOne({
-      itemName,
-    });
-
-    if (existingItem) {
-      return res.status(400).json({
-        success: false,
-
-        message: "Item already exists",
-      });
-    }
-
-    // ==========================================
-    // CREATE INVENTORY
-    // ==========================================
-
-    const inventory = await Inventory.create({
-      itemName,
-
-      category,
-
-      otherCategory,
-
-      currentStock: Number(quantity),
-
-      minimumStock: Number(minimumStock),
-
-      unit,
-    });
-    // ==========================================
-    // RESPONSE
-    // ==========================================
-
-    return res.status(201).json({
-      success: true,
-
-      message: "Inventory Added Successfully",
-
-      inventory,
-    });
-  } catch (error) {
-    console.log(error);
-
-    return res.status(500).json({
-      success: false,
-
-      message: error.message,
-    });
-  }
+  return res.status(409).json({
+    success: false,
+    message:
+      "Direct inventory addition is disabled. Use Stock Inward (Manual Entry or Excel Import).",
+  });
 };
 
 // ==========================================
 // GET ALL INVENTORY
 // ==========================================
 
-exports.getAllInventory = async (req, res) => {
-  try {
-    const inventory = await Inventory.find()
-
-      .sort({ createdAt: -1 });
-
-    return res.status(200).json({
-      success: true,
-
-      inventory,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-
-      message: error.message,
-    });
-  }
-};
+exports.getAllInventory = inventoryController.getInventoryItems;
 
 // ==========================================
 // GET SINGLE INVENTORY
 // ==========================================
 
+// Preserve the old response key "inventory"
+// for legacy consumers.
+
 exports.getSingleInventory = async (req, res) => {
-  try {
-    const inventory = await Inventory.findById(req.params.id);
-
-    if (!inventory) {
-      return res.status(404).json({
-        success: false,
-
-        message: "Inventory not found",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-
-      inventory,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-
-      message: error.message,
-    });
-  }
+  return inventoryController.getSingleInventoryItem(req, res);
 };
 
 // ==========================================
 // UPDATE INVENTORY
 // ==========================================
 
-exports.updateInventory = async (req, res) => {
-  try {
-    const inventory = await Inventory.findByIdAndUpdate(
-      req.params.id,
+// Only metadata and Item Code are editable.
+// Stock quantities cannot be overwritten.
 
-      req.body,
-
-      {
-        new: true,
-
-        runValidators: true,
-      },
-    );
-
-    if (!inventory) {
-      return res.status(404).json({
-        success: false,
-
-        message: "Inventory not found",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-
-      message: "Inventory updated successfully",
-
-      inventory,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-
-      message: error.message,
-    });
-  }
-};
+exports.updateInventory = inventoryController.updateInventoryItem;
 
 // ==========================================
 // DELETE INVENTORY
 // ==========================================
 
-exports.deleteInventory = async (req, res) => {
-  try {
-    const inventory = await Inventory.findByIdAndDelete(req.params.id);
+// Soft deletion only. Existing stock records,
+// vouchers and transaction references survive.
 
-    if (!inventory) {
-      return res.status(404).json({
-        success: false,
-
-        message: "Inventory not found",
-      });
-    }
-
-    return res.status(200).json({
-      success: true,
-
-      message: "Inventory deleted successfully",
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-
-      message: error.message,
-    });
-  }
-};
+exports.deleteInventory = inventoryController.deleteInventoryItem;
 
 // ==========================================
 // LOW STOCK ITEMS
 // ==========================================
 
-exports.getLowStockItems = async (req, res) => {
-  try {
-    const lowStockItems = await Inventory.find({
-      $expr: {
-        $lte: ["$currentStock", "$minimumStock"],
-      },
-    }).sort({
-      createdAt: -1,
-    });
-
-    return res.status(200).json({
-      success: true,
-
-      count: lowStockItems.length,
-
-      lowStockItems,
-    });
-  } catch (error) {
-    return res.status(500).json({
-      success: false,
-
-      message: error.message,
-    });
-  }
-};
+exports.getLowStockItems = inventoryController.getLowStockItems;
