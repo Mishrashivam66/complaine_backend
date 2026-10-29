@@ -502,6 +502,13 @@ exports.issueItem = async (req, res) => {
 
       const inventory = matching[0];
 
+      console.log("ISSUE INVENTORY DEBUG:", {
+        database: mongoose.connection.name,
+        itemName: inventory.itemName,
+        itemCode: inventory.itemCode || "MISSING",
+        inventoryId: String(inventory._id),
+        currentStock: inventory.currentStock,
+      });
       const inventoryItemCode = clean(inventory.itemCode).toUpperCase();
 
       if (!inventoryItemCode) {
