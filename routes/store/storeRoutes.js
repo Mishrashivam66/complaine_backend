@@ -4,10 +4,6 @@ const router = express.Router();
 const { protect } = require("../../middleware/authMiddleware");
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
-// ==========================================
-// EXISTING STORE ROUTES
-// ==========================================
-
 const dashboardRoutes = require("./dashboardRoutes");
 const inventoryRoutes = require("./inventoryRoutes");
 const addInventoryRoutes = require("./addInventoryRoutes");
@@ -19,28 +15,17 @@ const damagedItemRoutes = require("./damagedItemRoutes");
 const retrievedItemRoutes = require("./retrievedItemRoutes");
 const stockInwardRoutes = require("./stockInwardRoutes");
 
-// ==========================================
-// NEW MATERIAL RECEIVING CONTROLLER
-// ==========================================
+// NEW REPORTS
+const storeReportRoutes = require("./storeReportRoutes");
 
 const materialReceivingController = require("../../controllers/store/materialReceivingController");
 
-// ==========================================
-// ALL ROUTES REQUIRE AUTHENTICATION
-// ==========================================
-
 router.use(protect);
 
-// ==========================================
-// STORE MANAGER DASHBOARD
-// ==========================================
-
+// DASHBOARD
 router.use("/dashboard", roleMiddleware("STORE_MANAGER"), dashboardRoutes);
 
-// ==========================================
-// INVENTORY MANAGEMENT
-// ==========================================
-
+// INVENTORY
 router.use("/inventory", roleMiddleware("STORE_MANAGER"), inventoryRoutes);
 
 router.use(
@@ -49,65 +34,39 @@ router.use(
   addInventoryRoutes,
 );
 
-// ==========================================
-// STOCK OPERATIONS
-// ==========================================
-
+// STOCK
 router.use("/stock", roleMiddleware("STORE_MANAGER"), stockRoutes);
 
 router.use("/low-stock", roleMiddleware("STORE_MANAGER"), lowStockRoutes);
 
 router.use("/stock-inward", roleMiddleware("STORE_MANAGER"), stockInwardRoutes);
 
-// ==========================================
-// MATERIAL REQUESTS
-// ==========================================
-
-// Store Manager reviews/approves requests.
-// Request creation by Manager/Technician can use
-// its existing separately authorized routes.
+// REQUESTS
 router.use("/requests", requestRoutes);
 
-// ==========================================
-// MATERIAL ISSUE
-// ==========================================
-
+// ISSUED ITEMS
 router.use("/issued-items", roleMiddleware("STORE_MANAGER"), issuedItemRoutes);
 
-// ==========================================
-// RETRIEVED MATERIALS
-// ==========================================
-
+// RETRIEVED MATERIAL
 router.use(
   "/retrieved-items",
   roleMiddleware("STORE_MANAGER"),
   retrievedItemRoutes,
 );
 
-// ==========================================
 // LEGACY DAMAGED ITEMS
-// ==========================================
-
 router.use(
   "/damaged-items",
   roleMiddleware("STORE_MANAGER"),
   damagedItemRoutes,
 );
 
-// ==========================================
-// TECHNICIAN MATERIAL RECEIVING
-// ==========================================
-
-// Only the authenticated Technician can view
-// materials assigned to their account.
-
+// TECHNICIAN RECEIVING
 router.get(
   "/material-receiving/my-materials",
   roleMiddleware("WORKER"),
   materialReceivingController.getMyMaterials,
 );
-
-// Technician confirms physically received quantity.
 
 router.post(
   "/material-receiving/confirm",
@@ -115,17 +74,16 @@ router.post(
   materialReceivingController.confirmReceiving,
 );
 
-// ==========================================
-// STORE MANAGER RECEIVING AUDIT
-// ==========================================
-
-// Store Manager can view confirmations,
-// differences and disputed quantities.
-
 router.get(
   "/material-receiving/all",
   roleMiddleware("STORE_MANAGER"),
   materialReceivingController.getAllReceiving,
 );
+
+// ==========================================
+// REPORTS & RECEIPTS
+// ==========================================
+
+router.use("/reports", roleMiddleware("STORE_MANAGER"), storeReportRoutes);
 
 module.exports = router;
