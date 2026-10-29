@@ -703,245 +703,465 @@ function drawTable(pdf, heading, headers, rows, widths) {
 // GENERATE A4 PDF
 // ==========================================
 
-function writePDF(res, report) {
-  res.set({
-    "Content-Type": "application/pdf",
+function drawTable(pdf, heading, headers, rows, widths) {
+  const LEFT = 38;
+  const RIGHT = 38;
+  const TOP = 45;
+  const BOTTOM = pdf.page.height - 65;
 
-    "Content-Disposition": `attachment; filename="AMI_Daily_Store_${report.date}.pdf"`,
+  const pageWidth = pdf.page.width - LEFT - RIGHT;
+  const total = widths.reduce((sum, value) => sum + value, 0);
+  const columns = widths.map((value) => (value / total) * pageWidth);
 
-    "Cache-Control": "no-store",
+  function resetCursor(y) {
+    pdf.x = LEFT;
+    pdf.y = y;
+  }
+
+  function newPage() {
+    pdf.addPage();
+    resetCursor(TOP);
+  }
+
+  function ensureSpace(height) {
+    if (pdf.y + height > BOTTOM) {
+      newPage();
+    }
+  }
+
+  function tableHeader(includeTitle = true) {
+    ensureSpace(includeTitle ? 78 : 45);
+
+    let currentY = pdf.y;
+
+    if (includeTitle) {
+      pdf
+        .font("Helvetica-Bold")
+        .fontSize(11)
+        .fillColor("#001B54")
+        .text(heading, LEFT, currentY, {
+          width: pageWidth,
+          height: 20,
+          lineBreak: false,
+        });
+
+      currentY += 27;
+    }
+
+    const headerHeight = 29;
+
+    pdf.rect(LEFT, currentY, pageWidth, headerHeight).fill("#001B54");
+
+    let x = LEFT;
+
+    headers.forEach((header, index) => {
+      pdf
+        .font("Helvetica-Bold")
+        .fontSize(7.5)
+        .fillColor("#FFFFFF")
+        .text(String(header), x + 5, currentY + 8, {
+          width: columns[index] - 10,
+          height: 15,
+          ellipsis: true,
+          lineBreak: false,
+        });
+
+      x += columns[index];
+    });
+
+    resetCursor(currentY + headerHeight);
+  }
+
+  resetCursor(pdf.y + 14);
+  tableHeader();
+
+  if (!rows.length) {
+    const y = pdf.y;
+
+    pdf.rect(LEFT, y, pageWidth, 30).fill("#F8FAFC");
+
+    pdf
+      .font("Helvetica")
+      .fontSize(8.5)
+      .fillColor("#64748B")
+      .text("No records for selected date.", LEFT + 10, y + 9, {
+        width: pageWidth - 20,
+        height: 14,
+        lineBreak: false,
+      });
+
+    resetCursor(y + 36);
+    return;
+  }
+
+  rows.forEach((row, rowIndex) => {
+    const values = row.map((value) => display(value));
+
+    pdf.font("Helvetica").fontSize(7.5);
+
+    const textHeights = values.map((value, index) =>
+      pdf.heightOfString(value, {
+        width: Math.max(12, columns[index] - 10),
+      }),
+    );
+
+    const rowHeight = Math.min(
+      65,
+      Math.max(30, ...textHeights.map((height) => height + 12)),
+    );
+
+    if (pdf.y + rowHeight > BOTTOM) {
+      newPage();
+      tableHeader(false);
+    }
+
+    const y = pdf.y;
+
+    pdf
+      .rect(LEFT, y, pageWidth, rowHeight)
+      .fill(rowIndex % 2 === 0 ? "#FFFFFF" : "#F4F7FB");
+
+    pdf
+      .rect(LEFT, y, pageWidth, rowHeight)
+      .lineWidth(0.4)
+      .strokeColor("#DCE4ED")
+      .stroke();
+
+    let x = LEFT;
+
+    values.forEach((value, index) => {
+      pdf
+        .font("Helvetica")
+        .fontSize(7.5)
+        .fillColor("#243047")
+        .text(value, x + 5, y + 7, {
+          width: columns[index] - 10,
+          height: rowHeight - 12,
+          ellipsis: true,
+          lineBreak: false,
+        });
+
+      x += columns[index];
+    });
+
+    resetCursor(y + rowHeight);
   });
 
+  resetCursor(pdf.y + 8);
+}
+
+// ==========================================
+// PROFESSIONAL DAILY STORE A4 PDF
+// ==========================================
+
+function writePDF(res, report) {
   const pdf = new PDFDocument({
     size: "A4",
     margins: {
-      top: 36,
-      left: 36,
-      right: 36,
-      bottom: 45,
+      top: 42,
+      bottom: 58,
+      left: 38,
+      right: 38,
     },
     bufferPages: true,
   });
 
+  res.set({
+    "Content-Type": "application/pdf",
+    "Content-Disposition": `attachment; filename="AMI_Daily_Store_${report.date}.pdf"`,
+    "Cache-Control": "no-store",
+  });
+
   pdf.pipe(res);
 
+  const LEFT = 38;
+  const WIDTH = pdf.page.width - 76;
+
+  // ========================================
+  // HEADER
+  // ========================================
+
   pdf
     .font("Helvetica-Bold")
-    .fillColor("#001B54")
     .fontSize(20)
-    .text("AMI MAINTENANCE", { align: "center" });
+    .fillColor("#001B54")
+    .text("AMI MAINTENANCE", LEFT, 45, {
+      width: WIDTH,
+      align: "center",
+      lineBreak: false,
+    });
 
   pdf
     .font("Helvetica")
-    .fillColor("#98732A")
-    .fontSize(10)
-    .text("UNIVERSITY STORE DEPARTMENT", { align: "center" });
-
-  pdf.moveDown(0.5);
+    .fontSize(9)
+    .fillColor("#A17E38")
+    .text("UNIVERSITY STORE DEPARTMENT", LEFT, 74, {
+      width: WIDTH,
+      align: "center",
+      lineBreak: false,
+    });
 
   pdf
     .font("Helvetica-Bold")
+    .fontSize(13)
     .fillColor("#001B54")
-    .fontSize(14)
-    .text("Daily Store Transaction Report", { align: "center" });
+    .text("DAILY STORE TRANSACTION REPORT", LEFT, 99, {
+      width: WIDTH,
+      align: "center",
+      lineBreak: false,
+    });
 
   pdf
     .font("Helvetica")
-    .fillColor("#475569")
     .fontSize(9)
-    .text(
-      `Date: ${report.date} (IST) | Generated: ${dateTime(report.generatedAt)}`,
-      { align: "center" },
-    );
+    .fillColor("#64748B")
+    .text(`Report Date: ${report.date} (IST)`, LEFT, 123, {
+      width: WIDTH,
+      align: "center",
+      lineBreak: false,
+    });
 
-  pdf.moveDown();
+  pdf
+    .moveTo(LEFT, 150)
+    .lineTo(LEFT + WIDTH, 150)
+    .lineWidth(1.5)
+    .strokeColor("#C9A65D")
+    .stroke();
 
-  // DAILY SUMMARY
+  pdf.x = LEFT;
+  pdf.y = 163;
+
+  // ========================================
+  // 1. DAILY SUMMARY
+  // ========================================
 
   drawTable(
     pdf,
-    "Daily Summary",
-    ["Metric", "Count"],
+    "1. DAILY STORE SUMMARY",
+    ["PARTICULARS", "TOTAL"],
     [
       ["Stock Inward Entries", report.summary.stockInwardEntries],
       ["Material Issue Entries", report.summary.materialIssueEntries],
-      [
-        "Technician Receiving Confirmations",
-        report.summary.technicianReceivingEntries,
-      ],
+      ["Technician Receiving", report.summary.technicianReceivingEntries],
       ["Retrieved / Damaged Receipts", report.summary.retrievedEntries],
       ["Receiving Disputes", report.summary.disputedReceiving],
       ["Stock Ledger Transactions", report.summary.stockTransactionEntries],
     ],
-    [3, 1],
+    [4, 1],
   );
 
-  // UNIT-WISE TOTALS
+  // ========================================
+  // 2. QUANTITY BY UNIT
+  // ========================================
 
   const unitRows = [
-    ["Inward", report.summary.inwardByUnit],
-    ["Issue", report.summary.issuedByUnit],
+    ["Stock Inward", report.summary.inwardByUnit],
+    ["Material Issue", report.summary.issuedByUnit],
     ["Usable Return", report.summary.returnByUnit],
     ["Damaged Retrieval", report.summary.retrievedByUnit],
   ].flatMap(([type, values]) =>
-    values.map((v) => [type, v.unit, formatQty(v.quantity)]),
+    (values || []).map((item) => [type, item.unit, formatQty(item.quantity)]),
   );
 
   drawTable(
     pdf,
-    "Quantities by UOM",
-    ["Movement", "UOM", "Quantity"],
+    "2. MATERIAL QUANTITY SUMMARY",
+    ["MOVEMENT", "UOM", "QUANTITY"],
     unitRows,
-    [3, 2, 1],
+    [3, 1.5, 1.5],
   );
 
-  // STOCK INWARD
+  // ========================================
+  // 3. STOCK INWARD
+  // ========================================
 
   const inwardRows = report.inward.flatMap((grn) =>
-    (grn.items || []).map((line) => [
+    (grn.items || []).map((item) => [
       grn.grnNo || grn.inwardNo,
-      line.itemName,
-      line.unit,
-      formatQty(line.quantity),
+      item.itemName,
+      item.unit,
+      formatQty(item.quantity),
       grn.vendorName,
     ]),
   );
 
   drawTable(
     pdf,
-    "1. Stock Inward / GRN",
-    ["GRN", "Material", "UOM", "Qty", "Vendor"],
+    "3. STOCK INWARD / GRN REGISTER",
+    ["GRN", "MATERIAL", "UOM", "QTY", "VENDOR"],
     inwardRows,
-    [2.2, 3, 0.9, 0.9, 2.3],
+    [2.5, 3, 0.8, 0.8, 2],
   );
 
-  // ISSUE REGISTER
+  // ========================================
+  // 4. MATERIAL ISSUE
+  // ========================================
 
   drawTable(
     pdf,
-    "2. Material Issue Register",
-    ["Voucher", "Material", "UOM", "Qty", "Issued To"],
-    report.issues.map((i) => [
-      i.voucherNo || i.storeSlipNo,
-      i.item,
-      i.unit,
-      formatQty(i.quantity),
-      i.issuedTo,
+    "4. MATERIAL ISSUE REGISTER",
+    ["VOUCHER", "MATERIAL", "UOM", "QTY", "ISSUED TO"],
+    report.issues.map((item) => [
+      item.voucherNo || item.storeSlipNo,
+      item.item,
+      item.unit,
+      formatQty(item.quantity),
+      item.issuedTo,
     ]),
-    [2.3, 3, 0.9, 0.9, 2.2],
+    [2.8, 2.8, 0.8, 0.8, 2],
   );
 
-  // TECHNICIAN RECEIVING
+  // ========================================
+  // 5. TECHNICIAN RECEIVING
+  // ========================================
 
   drawTable(
     pdf,
-    "3. Technician Receiving",
-    ["Voucher", "Material", "Issued", "Received", "Short", "Status"],
-    report.receiving.map((i) => [
-      i.issuedItem?.voucherNo,
-      i.issuedItem?.item,
-      formatQty(i.issuedQuantity),
-      formatQty(i.receivedQuantity),
-      formatQty(i.shortageQuantity),
-      i.status,
+    "5. TECHNICIAN MATERIAL RECEIVING",
+    ["MATERIAL", "ISSUED", "RECEIVED", "SHORT", "STATUS"],
+    report.receiving.map((item) => [
+      item.issuedItem?.item,
+      formatQty(item.issuedQuantity),
+      formatQty(item.receivedQuantity),
+      formatQty(item.shortageQuantity),
+      item.status,
     ]),
-    [2.4, 2.8, 0.8, 0.8, 0.8, 1.6],
+    [3, 1.2, 1.2, 1.2, 2],
   );
 
-  // RETRIEVED MATERIALS
+  // ========================================
+  // 6. RETRIEVED MATERIALS
+  // ========================================
 
   drawTable(
     pdf,
-    "4. Retrieved / Damaged Materials",
-    ["Material", "Condition", "UOM", "Qty", "From"],
-    report.retrieved.map((i) => [
-      i.itemName,
-      i.condition,
-      i.unit,
-      formatQty(i.quantity),
-      i.receivedFrom,
+    "6. RETRIEVED / DAMAGED MATERIALS",
+    ["MATERIAL", "CONDITION", "UOM", "QTY", "RECEIVED FROM"],
+    report.retrieved.map((item) => [
+      item.itemName,
+      item.condition,
+      item.unit,
+      formatQty(item.quantity),
+      item.receivedFrom,
     ]),
     [3, 1.5, 0.8, 0.8, 2],
   );
 
-  // COMPLETE STOCK LEDGER
+  // ========================================
+  // 7. STOCK TRANSACTION LEDGER
+  // ========================================
 
   drawTable(
     pdf,
-    "5. Complete Stock Transaction Ledger",
-    ["Time", "Material", "Type", "Qty", "Before", "After"],
-    report.transactions.map((t) => [
-      dateTime(t.transactionDate),
-      t.itemName,
-      t.type,
-      `${formatQty(t.quantity)} ${t.unit}`,
-      formatQty(t.balanceBefore),
-      formatQty(t.balanceAfter),
+    "7. STOCK TRANSACTION LEDGER",
+    ["DATE / TIME", "MATERIAL", "TYPE", "QTY", "BEFORE", "AFTER"],
+    report.transactions.map((item) => [
+      dateTime(item.transactionDate),
+      item.itemName,
+      item.type,
+      `${formatQty(item.quantity)} ${item.unit || ""}`,
+      formatQty(item.balanceBefore),
+      formatQty(item.balanceAfter),
     ]),
-    [2.2, 2.6, 1.5, 1.4, 1, 1],
+    [2.1, 2.5, 1.5, 1.5, 1, 1],
   );
 
-  // ITEM-WISE MOVEMENTS
+  // ========================================
+  // 8. ITEM-WISE MOVEMENTS
+  // ========================================
 
   drawTable(
     pdf,
-    "6. Item-wise Movement (Ledger Activity)",
-    ["Material", "UOM", "Opening*", "In", "Out", "Closing*"],
-    report.movement.map((m) => [
-      m.itemName,
-      m.unit,
-      formatQty(m.opening),
-      formatQty(m.inward + m.returned + m.adjustmentIn),
-      formatQty(m.issued + m.adjustmentOut),
-      formatQty(m.closing),
+    "8. ITEM-WISE STOCK MOVEMENT",
+    ["MATERIAL", "UOM", "OPENING*", "IN", "OUT", "CLOSING*"],
+    report.movement.map((item) => [
+      item.itemName,
+      item.unit,
+      formatQty(item.opening),
+      formatQty(item.inward + item.returned + item.adjustmentIn),
+      formatQty(item.issued + item.adjustmentOut),
+      formatQty(item.closing),
     ]),
-    [3, 1, 1.4, 1, 1, 1.4],
+    [3, 0.9, 1.4, 1, 1, 1.4],
   );
 
-  // REPORT FOOTER
+  // ========================================
+  // NOTES AND SIGNATURES
+  // ========================================
 
-  if (pdf.y > pdf.page.height - 110) {
+  if (pdf.y > pdf.page.height - 155) {
     pdf.addPage();
+    pdf.x = LEFT;
+    pdf.y = 45;
   }
 
-  pdf.moveDown();
+  const noteY = pdf.y + 10;
 
   pdf
     .font("Helvetica")
     .fontSize(8)
     .fillColor("#64748B")
     .text(
-      "* Opening/closing are the first/last recorded ledger balances that day; legacy gaps can affect historical completeness.",
-    )
-    .text(
-      "Damaged retrieval does not increase usable stock. Different units are never combined into one total.",
+      "* Opening and closing balances reflect the first and last available ledger entries for the day. Legacy history may be incomplete.",
+      LEFT,
+      noteY,
+      {
+        width: WIDTH,
+      },
     );
 
-  pdf.moveDown(3);
+  const signatureY = noteY + 70;
 
   pdf
+    .moveTo(LEFT, signatureY)
+    .lineTo(LEFT + 195, signatureY)
+    .strokeColor("#64748B")
+    .stroke();
+
+  pdf
+    .moveTo(LEFT + 305, signatureY)
+    .lineTo(LEFT + 495, signatureY)
+    .stroke();
+
+  pdf
+    .font("Helvetica-Bold")
+    .fontSize(8)
     .fillColor("#001B54")
-    .text(
-      "Prepared by (Store Manager): __________________      Authorized signature: __________________",
-    );
+    .text("Prepared By / Store Manager", LEFT, signatureY + 8, {
+      width: 195,
+      lineBreak: false,
+    });
 
+  pdf
+    .font("Helvetica-Bold")
+    .fontSize(8)
+    .text("Authorized Signature", LEFT + 305, signatureY + 8, {
+      width: 190,
+      lineBreak: false,
+    });
+
+  // ========================================
   // PAGE NUMBERS
+  // ========================================
 
-  const pages = pdf.bufferedPageRange();
+  const range = pdf.bufferedPageRange();
 
-  for (let i = pages.start; i < pages.start + pages.count; i++) {
-    pdf.switchToPage(i);
+  for (let page = range.start; page < range.start + range.count; page++) {
+    pdf.switchToPage(page);
+
+    const y = pdf.page.height - 42;
 
     pdf
       .font("Helvetica")
       .fontSize(8)
       .fillColor("#64748B")
       .text(
-        `AMI MAINTENANCE | ${report.date} | Page ${i + 1} of ${pages.count}`,
-        36,
-        pdf.page.height - 29,
+        `AMI MAINTENANCE | ${report.date} | Page ${page + 1} of ${range.count}`,
+        LEFT,
+        y,
         {
-          width: pdf.page.width - 72,
+          width: WIDTH,
+          height: 12,
           align: "center",
           lineBreak: false,
         },
