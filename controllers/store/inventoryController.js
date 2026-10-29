@@ -7,6 +7,8 @@ const Inventory = require("../../models/Inventory");
 
 const validId = (id) => mongoose.isValidObjectId(id);
 
+const clean = (value) => (typeof value === "string" ? value.trim() : "");
+
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 const isNonNegative = (value) =>
@@ -16,7 +18,14 @@ const isNonNegative = (value) =>
   Number.isFinite(Number(value)) &&
   Number(value) >= 0;
 
-const clean = (value) => (typeof value === "string" ? value.trim() : "");
+const stockStatus = (stock, minimum) => {
+  const current = Number(stock || 0);
+  const min = Number(minimum || 0);
+
+  if (current <= 0) return "Out Of Stock";
+  if (current <= min) return "Low Stock";
+  return "Available";
+};
 
 const handleError = (res, error) => {
   console.error("STORE INVENTORY ERROR:", error);
@@ -28,7 +37,7 @@ const handleError = (res, error) => {
     });
   }
 
-  if (error.name === "ValidationError") {
+  if (error.name === "ValidationError" || error.name === "CastError") {
     return res.status(400).json({
       success: false,
       message: error.message,
@@ -42,7 +51,37 @@ const handleError = (res, error) => {
 };
 
 // ==========================================
+// FORMAT INVENTORY RESPONSE
+// ==========================================
+
+const formatInventory = (item) => {
+  const data =
+    typeof item.toObject === "function" ? item.toObject() : { ...item };
+
+  return {
+    ...data,
+
+    itemCode: clean(data.itemCode).toUpperCase(),
+
+    itemDescription: clean(data.itemDescription) || clean(data.itemName),
+
+    openingQuantity: data.openingQuantity ?? null,
+
+    incomingQuantity: Number(data.incomingQuantity ?? 0),
+
+    outgoingQuantity: Number(data.outgoingQuantity ?? 0),
+
+    currentStock: Number(data.currentStock ?? 0),
+
+    minimumStock: Number(data.minimumStock ?? 5),
+
+    status: stockStatus(data.currentStock, data.minimumStock),
+  };
+};
+
+// ==========================================
 // CREATE INVENTORY ITEM
+// POST /api/store/inventory
 // ==========================================
 
 const createInventoryItem = async (req, res) => {
@@ -60,6 +99,8 @@ const createInventoryItem = async (req, res) => {
     } = req.body;
 
     const name = clean(itemName);
+    const code = clean(itemCode).toUpperCase();
+
     const stock = quantity !== undefined ? quantity : currentStock;
 
     if (
@@ -75,21 +116,19 @@ const createInventoryItem = async (req, res) => {
       });
     }
 
-    const existing = await Inventory.findOne({
+    const existingName = await Inventory.findOne({
       itemName: {
         $regex: `^${escapeRegex(name)}$`,
         $options: "i",
       },
     });
 
-    if (existing) {
+    if (existingName) {
       return res.status(409).json({
         success: false,
         message: "Inventory item already exists",
       });
     }
-
-    const code = clean(itemCode).toUpperCase();
 
     if (code) {
       const existingCode = await Inventory.findOne({
@@ -109,12 +148,12 @@ const createInventoryItem = async (req, res) => {
       itemDescription: clean(itemDescription),
       category: clean(category),
       otherCategory: clean(otherCategory),
+      unit: clean(unit),
       currentStock: Number(stock),
       openingQuantity: Number(stock),
       incomingQuantity: 0,
       outgoingQuantity: 0,
       minimumStock: Number(minimumStock ?? 5),
-      unit: clean(unit),
     };
 
     if (code) data.itemCode = code;
@@ -124,7 +163,7 @@ const createInventoryItem = async (req, res) => {
     return res.status(201).json({
       success: true,
       message: "Inventory item created successfully",
-      item,
+      item: formatInventory(item),
     });
   } catch (error) {
     return handleError(res, error);
@@ -132,17 +171,31 @@ const createInventoryItem = async (req, res) => {
 };
 
 // ==========================================
-// GET ALL INVENTORY ITEMS
+// GET ALL INVENTORY
+// GET /api/store/inventory/all
 // ==========================================
 
 const getInventoryItems = async (req, res) => {
   try {
-    const items = await Inventory.find().sort({ createdAt: -1 });
+    const items = await Inventory.find({}).sort({ createdAt: -1 }).lean();
+
+    const inventory = items.map(formatInventory);
+
+    const missingItemCodes = inventory.filter((item) => !item.itemCode).length;
 
     return res.status(200).json({
       success: true,
-      count: items.length,
-      items,
+      count: inventory.length,
+
+      // Support old and new frontend formats.
+      inventory,
+      items: inventory,
+
+      summary: {
+        total: inventory.length,
+        withItemCode: inventory.length - missingItemCodes,
+        missingItemCodes,
+      },
     });
   } catch (error) {
     return handleError(res, error);
@@ -150,7 +203,8 @@ const getInventoryItems = async (req, res) => {
 };
 
 // ==========================================
-// GET SINGLE INVENTORY ITEM
+// GET SINGLE INVENTORY
+// GET /api/store/inventory/:id
 // ==========================================
 
 const getSingleInventoryItem = async (req, res) => {
@@ -162,7 +216,7 @@ const getSingleInventoryItem = async (req, res) => {
       });
     }
 
-    const item = await Inventory.findById(req.params.id);
+    const item = await Inventory.findById(req.params.id).lean();
 
     if (!item) {
       return res.status(404).json({
@@ -173,7 +227,7 @@ const getSingleInventoryItem = async (req, res) => {
 
     return res.status(200).json({
       success: true,
-      item,
+      item: formatInventory(item),
     });
   } catch (error) {
     return handleError(res, error);
@@ -181,7 +235,8 @@ const getSingleInventoryItem = async (req, res) => {
 };
 
 // ==========================================
-// UPDATE INVENTORY ITEM
+// UPDATE INVENTORY METADATA
+// PUT /api/store/inventory/:id
 // ==========================================
 
 const updateInventoryItem = async (req, res) => {
@@ -202,6 +257,28 @@ const updateInventoryItem = async (req, res) => {
       });
     }
 
+    // Stock must remain ledger-controlled.
+    const blockedFields = [
+      "quantity",
+      "currentStock",
+      "openingQuantity",
+      "incomingQuantity",
+      "outgoingQuantity",
+      "status",
+    ];
+
+    const attemptedStockEdit = blockedFields.some(
+      (field) => req.body[field] !== undefined,
+    );
+
+    if (attemptedStockEdit) {
+      return res.status(400).json({
+        success: false,
+        message:
+          "Stock quantity cannot be edited here. Use Stock Inward or an authorized adjustment.",
+      });
+    }
+
     const {
       itemCode,
       itemName,
@@ -212,22 +289,6 @@ const updateInventoryItem = async (req, res) => {
       unit,
       isActive,
     } = req.body;
-
-    // Do not silently overwrite stock through
-    // the metadata edit endpoint.
-    if (
-      req.body.currentStock !== undefined ||
-      req.body.quantity !== undefined ||
-      req.body.openingQuantity !== undefined ||
-      req.body.incomingQuantity !== undefined ||
-      req.body.outgoingQuantity !== undefined
-    ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Stock quantity cannot be edited here. Use the stock adjustment workflow.",
-      });
-    }
 
     if (itemName !== undefined) {
       const name = clean(itemName);
@@ -339,7 +400,7 @@ const updateInventoryItem = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Inventory updated successfully",
-      item,
+      item: formatInventory(item),
     });
   } catch (error) {
     return handleError(res, error);
@@ -347,7 +408,7 @@ const updateInventoryItem = async (req, res) => {
 };
 
 // ==========================================
-// DELETE INVENTORY ITEM
+// SOFT DELETE INVENTORY ITEM
 // ==========================================
 
 const deleteInventoryItem = async (req, res) => {
@@ -359,8 +420,6 @@ const deleteInventoryItem = async (req, res) => {
       });
     }
 
-    // Soft delete: preserve references from
-    // issue vouchers and inventory history.
     const item = await Inventory.findByIdAndUpdate(
       req.params.id,
       { $set: { isActive: false } },
@@ -377,7 +436,7 @@ const deleteInventoryItem = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Inventory item deactivated successfully",
-      item,
+      item: formatInventory(item),
     });
   } catch (error) {
     return handleError(res, error);
@@ -385,36 +444,33 @@ const deleteInventoryItem = async (req, res) => {
 };
 
 // ==========================================
-// LEGACY DIRECT STOCK UPDATE
+// DISABLE DIRECT STOCK REPLACEMENT
 // ==========================================
-
-// Direct editing has been intentionally disabled.
-// Stock adjustments need an auditable ledger entry,
-// reason and performedBy user.
-//
-// The proper inward/adjustment workflow will be
-// implemented with StockTransaction and GRN models.
 
 const updateStock = async (req, res) => {
   return res.status(409).json({
     success: false,
     message:
-      "Direct stock replacement is disabled to protect stock history. Use the new Stock Inward / Adjustment workflow.",
+      "Direct stock replacement is disabled. Use Stock Inward / Adjustment workflow.",
   });
 };
 
 // ==========================================
-// GET LOW STOCK ITEMS
+// LOW STOCK
 // ==========================================
 
 const getLowStockItems = async (req, res) => {
   try {
-    const lowStockItems = await Inventory.find({
+    const items = await Inventory.find({
       isActive: { $ne: false },
       $expr: {
         $lte: ["$currentStock", "$minimumStock"],
       },
-    }).sort({ createdAt: -1 });
+    })
+      .sort({ createdAt: -1 })
+      .lean();
+
+    const lowStockItems = items.map(formatInventory);
 
     return res.status(200).json({
       success: true,
