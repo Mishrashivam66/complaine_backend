@@ -6,6 +6,10 @@ const mongoose = require("mongoose");
 const MaterialRequest = require("../../models/MaterialRequest");
 const Complaint = require("../../models/Complaint");
 
+// ==========================================
+// CONSTANTS
+// ==========================================
+
 const MANAGER = "MAINTENANCE_MANAGER";
 const TECHNICIAN = "TECHNICIAN";
 
@@ -17,6 +21,14 @@ const ACTIVE_REQUEST_STATUSES = [
 ];
 
 const CLOSED_COMPLAINT_STATUSES = ["COMPLETED", "RESOLVED", "CLOSED"];
+
+const ALLOWED_TECHNICIAN_STAGES = [
+  "ASSIGNED",
+  "IN_PROGRESS",
+  "REOPENED",
+  "WAITING_MATERIAL",
+  "WAITING_FOR_MATERIAL",
+];
 
 const VALID_UNITS = [
   "PIECE",
@@ -33,6 +45,10 @@ const VALID_UNITS = [
   "OTHER",
 ];
 
+// ==========================================
+// HELPERS
+// ==========================================
+
 const upper = (value) =>
   String(value ?? "")
     .trim()
@@ -43,6 +59,9 @@ const text = (value) => (typeof value === "string" ? value.trim() : "");
 const userIdOf = (req) => req.user?._id || req.user?.id;
 
 const validId = (id) => mongoose.isValidObjectId(id);
+
+const roundQty = (value) =>
+  Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
 
 function fail(res, code, message) {
   return res.status(code).json({
@@ -59,9 +78,48 @@ function isTechnician(req) {
   return upper(req.user?.role) === TECHNICIAN;
 }
 
-// -------------------------------------------------------
-// Common request populate configuration
-// -------------------------------------------------------
+function validQuantity(value) {
+  const quantity = Number(value);
+
+  return (
+    value !== null &&
+    value !== undefined &&
+    value !== "" &&
+    Number.isFinite(quantity) &&
+    quantity >= 0.01 &&
+    quantity <= 1000000 &&
+    Math.abs(quantity * 1000 - Math.round(quantity * 1000)) < 1e-7
+  );
+}
+
+function hasStoreActivity(request) {
+  if (
+    request.approvedByStore ||
+    request.issuedBy ||
+    request.approvedAt ||
+    request.issuedAt
+  ) {
+    return true;
+  }
+
+  return request.materials.some((item) => {
+    return (
+      Number(item.approvedQuantity || 0) > 0 ||
+      Number(item.issuedQuantity || 0) > 0 ||
+      item.status !== "PENDING"
+    );
+  });
+}
+
+function managerApprovedFilter() {
+  return {
+    managerApprovalStatus: "APPROVED",
+  };
+}
+
+// ==========================================
+// POPULATE REQUEST DETAILS
+// ==========================================
 
 function populateRequests(query) {
   return query
@@ -98,19 +156,30 @@ function populateRequests(query) {
     })
     .populate("requestedBy", "name role")
     .populate("assignedWorker", "name phone department shift")
+    .populate("managerApprovedBy", "name role")
     .populate("approvedByStore", "name role")
     .populate("issuedBy", "name role");
 }
 
-// -------------------------------------------------------
-// GET ALL
-// Maintenance Manager + Store Manager only
-// -------------------------------------------------------
+// ==========================================
+// GET ALL MATERIAL REQUESTS
+//
+// Manager sees all requests.
+// Store sees manager-approved requests.
+// ==========================================
 
 exports.getAllMaterialRequests = async (req, res) => {
   try {
+    const filter = {};
+
+    if (upper(req.user?.role) === "STORE_MANAGER") {
+      Object.assign(filter, managerApprovedFilter());
+    } else if (!isManager(req)) {
+      return fail(res, 403, "Access denied");
+    }
+
     const requests = await populateRequests(
-      MaterialRequest.find().sort({ createdAt: -1 }),
+      MaterialRequest.find(filter).sort({ createdAt: -1 }),
     );
 
     return res.status(200).json({
@@ -125,14 +194,16 @@ exports.getAllMaterialRequests = async (req, res) => {
   }
 };
 
-// -------------------------------------------------------
-// GET MY REQUESTS
-// Technician sees requests linked to currently assigned
-// complaints, including Manager-created requests.
-// -------------------------------------------------------
+// ==========================================
+// GET TECHNICIAN'S MATERIAL REQUESTS
+// ==========================================
 
 exports.getMyMaterialRequests = async (req, res) => {
   try {
+    if (!isTechnician(req)) {
+      return fail(res, 403, "Technician access only");
+    }
+
     const technicianId = userIdOf(req);
 
     if (!validId(technicianId)) {
@@ -145,7 +216,7 @@ exports.getMyMaterialRequests = async (req, res) => {
       .select("_id")
       .lean();
 
-    const complaintIds = complaints.map((c) => c._id);
+    const complaintIds = complaints.map((complaint) => complaint._id);
 
     if (complaintIds.length === 0) {
       return res.json({
@@ -157,7 +228,9 @@ exports.getMyMaterialRequests = async (req, res) => {
 
     const requests = await populateRequests(
       MaterialRequest.find({
-        complaint: { $in: complaintIds },
+        complaint: {
+          $in: complaintIds,
+        },
       }).sort({ createdAt: -1 }),
     );
 
@@ -167,17 +240,15 @@ exports.getMyMaterialRequests = async (req, res) => {
       requests,
     });
   } catch (error) {
-    console.error("GET TECHNICIAN MATERIAL REQUESTS ERROR:", error);
+    console.error("GET TECHNICIAN REQUESTS ERROR:", error);
 
     return fail(res, 500, "Unable to load your material requests");
   }
 };
 
-// -------------------------------------------------------
-// GET REQUESTS BY COMPLAINT
-// Manager: any complaint
-// Technician: only currently assigned complaint
-// -------------------------------------------------------
+// ==========================================
+// GET COMPLAINT-WISE MATERIAL REQUESTS
+// ==========================================
 
 exports.getComplaintMaterialRequests = async (req, res) => {
   try {
@@ -218,24 +289,24 @@ exports.getComplaintMaterialRequests = async (req, res) => {
       }).sort({ createdAt: -1 }),
     );
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       count: requests.length,
       requests,
     });
   } catch (error) {
-    console.error("GET COMPLAINT MATERIAL REQUESTS ERROR:", error);
+    console.error("GET COMPLAINT REQUESTS ERROR:", error);
 
     return fail(res, 500, "Unable to fetch complaint material requests");
   }
 };
 
-// -------------------------------------------------------
-// CREATE REQUEST
-// Manager: before or after assignment
-// Technician: only on own assigned active complaint
-// No automatic Job Card
-// -------------------------------------------------------
+// ==========================================
+// CREATE MATERIAL REQUEST
+//
+// Manager -> Direct Store workflow
+// Technician -> Pending Manager approval
+// ==========================================
 
 exports.createMaterialRequest = async (req, res) => {
   try {
@@ -245,18 +316,22 @@ exports.createMaterialRequest = async (req, res) => {
       return fail(res, 401, "Invalid login session");
     }
 
+    if (!isManager(req) && !isTechnician(req)) {
+      return fail(res, 403, "Not authorized to request materials");
+    }
+
     const { complaintId, materials, reason } = req.body || {};
 
     if (!validId(complaintId)) {
       return fail(res, 400, "Valid Complaint ID is required");
     }
 
-    if (!Array.isArray(materials) || materials.length === 0) {
-      return fail(res, 400, "At least one material is required");
-    }
-
-    if (materials.length > 30) {
-      return fail(res, 400, "Maximum 30 materials allowed per request");
+    if (
+      !Array.isArray(materials) ||
+      materials.length === 0 ||
+      materials.length > 30
+    ) {
+      return fail(res, 400, "Please provide 1 to 30 materials");
     }
 
     const cleanReason = text(reason);
@@ -265,24 +340,26 @@ exports.createMaterialRequest = async (req, res) => {
       return fail(res, 400, "Reason must contain 5 to 1000 characters");
     }
 
-    // Server-only validation.
-    // Never trust quantity, role or assignedWorker
-    // values sent by frontend.
+    // ======================================
+    // VALIDATE MATERIALS
+    // ======================================
 
     const cleanMaterials = [];
     const seen = new Set();
 
     for (const material of materials) {
       const itemName = text(material?.itemName);
+
       const unit = upper(material?.unit || "PIECE");
+
       const quantity = Number(material?.quantity);
 
       if (!itemName || itemName.length > 150) {
         return fail(res, 400, "Material name must contain 1 to 150 characters");
       }
 
-      if (!Number.isFinite(quantity) || quantity < 0.01 || quantity > 1000000) {
-        return fail(res, 400, "Each quantity must be between 0.01 and 1000000");
+      if (!validQuantity(material?.quantity)) {
+        return fail(res, 400, `Invalid quantity for ${itemName}`);
       }
 
       if (!VALID_UNITS.includes(unit)) {
@@ -303,13 +380,21 @@ exports.createMaterialRequest = async (req, res) => {
 
       cleanMaterials.push({
         itemName,
-        quantity,
+        quantity: roundQty(quantity),
         unit,
+
+        managerApprovedQuantity: isManager(req) ? roundQty(quantity) : 0,
+
         approvedQuantity: 0,
         issuedQuantity: 0,
         status: "PENDING",
+        storeRemarks: "",
       });
     }
+
+    // ======================================
+    // COMPLAINT VALIDATION
+    // ======================================
 
     const complaint = await Complaint.findById(complaintId);
 
@@ -321,7 +406,7 @@ exports.createMaterialRequest = async (req, res) => {
       return fail(
         res,
         409,
-        "Cannot request materials for completed or resolved complaints",
+        "Cannot request materials for a completed or resolved complaint",
       );
     }
 
@@ -334,33 +419,31 @@ exports.createMaterialRequest = async (req, res) => {
         );
       }
 
-      // Prevent requesting materials for inactive stages.
-      if (
-        !["ASSIGNED", "IN_PROGRESS", "REOPENED", "WAITING_MATERIAL"].includes(
-          upper(complaint.status),
-        )
-      ) {
+      if (!ALLOWED_TECHNICIAN_STAGES.includes(upper(complaint.status))) {
         return fail(
           res,
           409,
           "Complaint is not eligible for a Technician material request",
         );
       }
-    } else if (!isManager(req)) {
-      return fail(
-        res,
-        403,
-        "You do not have permission to create material requests",
-      );
     }
 
-    // Existing active requests from either Manager or
-    // Technician must be considered to avoid duplication.
+    // ======================================
+    // PREVENT OVERLAPPING ACTIVE REQUESTS
+    // ======================================
+
+    // Allows a new request after the earlier
+    // request is fully issued or rejected.
+    // An active request for the same complaint
+    // must be handled first.
 
     const existing = await MaterialRequest.findOne({
       complaint: complaint._id,
       status: {
         $in: ACTIVE_REQUEST_STATUSES,
+      },
+      managerApprovalStatus: {
+        $ne: "REJECTED",
       },
     })
       .select("_id requestId status")
@@ -370,13 +453,17 @@ exports.createMaterialRequest = async (req, res) => {
       return res.status(409).json({
         success: false,
         message: "An active material request already exists for this complaint",
-        existingRequest: {
-          _id: existing._id,
-          requestId: existing.requestId,
-          status: existing.status,
-        },
+        existingRequest: existing,
       });
     }
+
+    // ======================================
+    // DETERMINE REQUEST SOURCE
+    // ======================================
+
+    const source = isTechnician(req) ? TECHNICIAN : MANAGER;
+
+    const managerApproved = source === MANAGER;
 
     const requestId =
       `MAT-${Date.now()}-` +
@@ -384,25 +471,37 @@ exports.createMaterialRequest = async (req, res) => {
 
     const request = await MaterialRequest.create({
       requestId,
-      complaint: complaint._id,
 
-      // May be null if Manager requests before assignment.
+      complaint: complaint._id,
+      jobCard: null,
+
       assignedWorker: complaint.assignedTo || null,
 
       requestedBy: requesterId,
+      requestSource: source,
+
       materials: cleanMaterials,
       reason: cleanReason,
-      status: "PENDING",
 
-      // No Job Card is created automatically.
-      jobCard: null,
+      managerApprovalStatus: managerApproved ? "APPROVED" : "PENDING",
+
+      managerApprovedBy: managerApproved ? requesterId : null,
+
+      managerApprovedAt: managerApproved ? new Date() : null,
+
+      managerRejectedAt: null,
+      managerRemarks: "",
+
+      status: "PENDING",
     });
 
-    // Preserve the current complaint status.
-    // A request must not silently overwrite IN_PROGRESS
-    // or REOPENED status.
-    //
-    // Reflect that material is required.
+    // ======================================
+    // FLAG MATERIAL REQUIREMENT
+    // ======================================
+
+    // Do not overwrite current complaint
+    // status (IN_PROGRESS / REOPENED).
+
     await Complaint.updateOne(
       {
         _id: complaint._id,
@@ -417,7 +516,11 @@ exports.createMaterialRequest = async (req, res) => {
 
     return res.status(201).json({
       success: true,
-      message: "Material request created successfully",
+
+      message: managerApproved
+        ? "Material request sent to Store Manager"
+        : "Material request submitted for Maintenance Manager approval",
+
       request,
     });
   } catch (error) {
@@ -435,43 +538,367 @@ exports.createMaterialRequest = async (req, res) => {
   }
 };
 
-// -------------------------------------------------------
-// DELETE PENDING REQUEST
-// Only Manager, preserves existing permissions.
-// -------------------------------------------------------
+// ==========================================
+// MANAGER APPROVE TECHNICIAN REQUEST
+//
+// PUT /:id/manager-approve
+//
+// Optional body:
+// {
+//   "remarks": "Approved",
+//   "materials": [
+//     {
+//       "materialId": "...",
+//       "approvedQuantity": 2
+//     }
+//   ]
+// }
+//
+// If materials not supplied:
+// Full requested quantity is approved.
+// ==========================================
 
-exports.deleteMaterialRequest = async (req, res) => {
+exports.approveTechnicianMaterialRequest = async (req, res) => {
   try {
-    if (!validId(req.params.id)) {
-      return fail(res, 400, "Invalid material request ID");
+    if (!isManager(req)) {
+      return fail(res, 403, "Maintenance Manager access only");
     }
 
-    const deleted = await MaterialRequest.findOneAndDelete({
-      _id: req.params.id,
-      status: "PENDING",
-    });
+    const requestId = req.params.id;
+    const managerId = userIdOf(req);
 
-    if (!deleted) {
-      const exists = await MaterialRequest.exists({
-        _id: req.params.id,
-      });
+    if (!validId(requestId) || !validId(managerId)) {
+      return fail(res, 400, "Invalid request or Manager ID");
+    }
 
+    const remarks = text(req.body?.remarks ?? req.body?.managerRemarks ?? "");
+
+    if (remarks.length > 1000) {
+      return fail(res, 400, "Remarks cannot exceed 1000 characters");
+    }
+
+    const suppliedMaterials = req.body?.materials;
+
+    if (suppliedMaterials !== undefined && !Array.isArray(suppliedMaterials)) {
+      return fail(res, 400, "Materials must be an array");
+    }
+
+    // ======================================
+    // VALIDATE APPROVAL INPUT
+    // ======================================
+
+    const quantityMap = new Map();
+
+    for (const item of suppliedMaterials || []) {
+      const materialId = String(item?.materialId || "");
+
+      if (!validId(materialId) || quantityMap.has(materialId)) {
+        return fail(res, 400, "Invalid or duplicate material ID");
+      }
+
+      if (!validQuantity(item.approvedQuantity)) {
+        return fail(
+          res,
+          400,
+          "Approved quantity must be positive and support up to 3 decimal places",
+        );
+      }
+
+      quantityMap.set(materialId, roundQty(item.approvedQuantity));
+    }
+
+    // ======================================
+    // OPTIMISTIC CONCURRENCY CONTROL
+    // ======================================
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const request = await MaterialRequest.findById(requestId);
+
+      if (!request) {
+        return fail(res, 404, "Material request not found");
+      }
+
+      if (request.requestSource !== TECHNICIAN) {
+        return fail(
+          res,
+          409,
+          "This request does not require Technician approval",
+        );
+      }
+
+      if (request.managerApprovalStatus !== "PENDING") {
+        return fail(res, 409, "This request has already been reviewed");
+      }
+
+      if (hasStoreActivity(request)) {
+        return fail(res, 409, "Store processing has already started");
+      }
+
+      if (
+        quantityMap.size > 0 &&
+        quantityMap.size !== request.materials.length
+      ) {
+        return fail(res, 400, "Provide approval quantities for all materials");
+      }
+
+      let approvedCount = 0;
+
+      for (const item of request.materials) {
+        const itemId = String(item._id);
+
+        if (quantityMap.size > 0 && !quantityMap.has(itemId)) {
+          return fail(res, 400, "Unknown or missing material ID");
+        }
+
+        const quantity =
+          quantityMap.size > 0
+            ? quantityMap.get(itemId)
+            : Number(item.quantity);
+
+        if (!validQuantity(quantity) || quantity > Number(item.quantity)) {
+          return fail(
+            res,
+            400,
+            `Invalid approved quantity for ${item.itemName}`,
+          );
+        }
+
+        item.managerApprovedQuantity = roundQty(quantity);
+
+        approvedCount++;
+      }
+
+      if (approvedCount !== request.materials.length) {
+        return fail(res, 400, "Approval quantities are incomplete");
+      }
+
+      const now = new Date();
+
+      const version = request.__v || 0;
+
+      const result = await MaterialRequest.updateOne(
+        {
+          _id: request._id,
+          __v: version,
+          managerApprovalStatus: "PENDING",
+        },
+        {
+          $set: {
+            materials: request.materials,
+            managerApprovalStatus: "APPROVED",
+            managerApprovedBy: managerId,
+            managerApprovedAt: now,
+            managerRejectedAt: null,
+            managerRemarks: remarks,
+            updatedAt: now,
+          },
+          $inc: {
+            __v: 1,
+          },
+        },
+        {
+          runValidators: true,
+        },
+      );
+
+      if (result.modifiedCount === 1) {
+        const updatedRequest = await populateRequests(
+          MaterialRequest.findById(requestId),
+        );
+
+        return res.status(200).json({
+          success: true,
+          message:
+            "Technician material request approved and forwarded to Store Manager",
+          request: updatedRequest,
+        });
+      }
+    }
+
+    return fail(
+      res,
+      409,
+      "Request changed by another user. Refresh and try again.",
+    );
+  } catch (error) {
+    console.error("MANAGER APPROVE REQUEST ERROR:", error);
+
+    return fail(res, 500, "Unable to approve Technician material request");
+  }
+};
+
+// ==========================================
+// MANAGER REJECT TECHNICIAN REQUEST
+//
+// PUT /:id/manager-reject
+//
+// Body:
+// {
+//   "remarks": "Material not required"
+// }
+// ==========================================
+
+exports.rejectTechnicianMaterialRequest = async (req, res) => {
+  try {
+    if (!isManager(req)) {
+      return fail(res, 403, "Maintenance Manager access only");
+    }
+
+    const requestId = req.params.id;
+    const managerId = userIdOf(req);
+
+    if (!validId(requestId) || !validId(managerId)) {
+      return fail(res, 400, "Invalid request or Manager ID");
+    }
+
+    const remarks = text(req.body?.remarks ?? req.body?.managerRemarks);
+
+    if (remarks.length < 5 || remarks.length > 1000) {
       return fail(
         res,
-        exists ? 409 : 404,
-        exists
-          ? "Only pending material requests can be deleted"
-          : "Material request not found",
+        400,
+        "Rejection reason must contain 5 to 1000 characters",
       );
     }
 
-    // Do not automatically clear materialRequired:
-    // another historical material request may exist,
-    // and Manager may have set a separate requirement.
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const request = await MaterialRequest.findById(requestId);
+
+      if (!request) {
+        return fail(res, 404, "Material request not found");
+      }
+
+      if (request.requestSource !== TECHNICIAN) {
+        return fail(res, 409, "Only Technician requests can be rejected here");
+      }
+
+      if (request.managerApprovalStatus !== "PENDING") {
+        return fail(res, 409, "Request has already been reviewed");
+      }
+
+      if (hasStoreActivity(request)) {
+        return fail(
+          res,
+          409,
+          "Cannot reject a request already processed by Store",
+        );
+      }
+
+      const version = request.__v || 0;
+      const now = new Date();
+
+      const result = await MaterialRequest.updateOne(
+        {
+          _id: request._id,
+          __v: version,
+          managerApprovalStatus: "PENDING",
+        },
+        {
+          $set: {
+            managerApprovalStatus: "REJECTED",
+            managerApprovedBy: null,
+            managerApprovedAt: null,
+            managerRejectedAt: now,
+            managerRemarks: remarks,
+            status: "REJECTED",
+            "materials.$[].managerApprovedQuantity": 0,
+            updatedAt: now,
+          },
+          $inc: {
+            __v: 1,
+          },
+        },
+        {
+          runValidators: true,
+        },
+      );
+
+      if (result.modifiedCount === 1) {
+        const updatedRequest = await populateRequests(
+          MaterialRequest.findById(requestId),
+        );
+
+        return res.status(200).json({
+          success: true,
+          message: "Technician material request rejected",
+          request: updatedRequest,
+        });
+      }
+    }
+
+    return fail(
+      res,
+      409,
+      "Request changed by another user. Refresh and try again.",
+    );
+  } catch (error) {
+    console.error("MANAGER REJECT REQUEST ERROR:", error);
+
+    return fail(res, 500, "Unable to reject Technician material request");
+  }
+};
+
+// ==========================================
+// DELETE MATERIAL REQUEST
+//
+// Preserve existing route.
+//
+// A Technician's pending request is NOT
+// physically deleted: reject with audit.
+// Existing Manager-created pending requests
+// may use the legacy delete behavior.
+// ==========================================
+
+exports.deleteMaterialRequest = async (req, res) => {
+  try {
+    if (!isManager(req)) {
+      return fail(res, 403, "Maintenance Manager access only");
+    }
+
+    const requestId = req.params.id;
+
+    if (!validId(requestId)) {
+      return fail(res, 400, "Invalid material request ID");
+    }
+
+    const request = await MaterialRequest.findById(requestId);
+
+    if (!request) {
+      return fail(res, 404, "Material request not found");
+    }
+
+    // Technician requests must not be deleted,
+    // because approval/rejection history matters.
+
+    if (request.requestSource === TECHNICIAN) {
+      return fail(
+        res,
+        409,
+        "Technician requests must be approved or rejected, not deleted",
+      );
+    }
+
+    if (request.status !== "PENDING" || hasStoreActivity(request)) {
+      return fail(
+        res,
+        409,
+        "Only unprocessed pending Manager requests can be deleted",
+      );
+    }
+
+    const deleted = await MaterialRequest.findOneAndDelete({
+      _id: requestId,
+      status: "PENDING",
+      __v: request.__v || 0,
+    });
+
+    if (!deleted) {
+      return fail(res, 409, "Request was updated. Refresh and try again.");
+    }
 
     return res.status(200).json({
       success: true,
-      message: "Material request deleted successfully",
+      message: "Unprocessed Manager request deleted successfully",
     });
   } catch (error) {
     console.error("DELETE MATERIAL REQUEST ERROR:", error);

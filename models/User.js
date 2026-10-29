@@ -10,10 +10,6 @@ const crypto = require("crypto");
 
 const userSchema = new mongoose.Schema(
   {
-    // ======================================
-    // BASIC INFORMATION
-    // ======================================
-
     name: {
       type: String,
       required: true,
@@ -22,21 +18,16 @@ const userSchema = new mongoose.Schema(
 
     email: {
       type: String,
-
       required: function () {
         return this.role === "STUDENT";
       },
-
       unique: true,
       sparse: true,
       lowercase: true,
       trim: true,
-
       validate: {
         validator: function (email) {
-          if (this.role !== "STUDENT") {
-            return true;
-          }
+          if (this.role !== "STUDENT") return true;
 
           const allowedDomains = ["s.amity.edu", "gwa.amity.edu"];
 
@@ -48,7 +39,6 @@ const userSchema = new mongoose.Schema(
 
           return allowedDomains.includes(domain);
         },
-
         message:
           "Only @s.amity.edu and @gwa.amity.edu email addresses are allowed",
       },
@@ -82,7 +72,6 @@ const userSchema = new mongoose.Schema(
 
     role: {
       type: String,
-
       enum: [
         "ADMIN",
         "BLOCK_ADMIN",
@@ -90,21 +79,49 @@ const userSchema = new mongoose.Schema(
         "WARDEN",
         "MAINTENANCE_MANAGER",
         "STORE_MANAGER",
-
         "TECHNICIAN",
         "WORKER",
-
         "STUDENT",
         "FACULTY",
         "ADMIN_STAFF",
-
-        // Legacy accounts
         "HOUSEKEEPING_HEAD",
         "IT_HEAD",
         "MESS_MANAGER",
       ],
-
       default: "STUDENT",
+    },
+
+    // ======================================
+    // PERMANENT TECHNICIAN ID
+    // ======================================
+
+    // Example: TECH-0001
+    //
+    // MongoDB _id remains the permanent
+    // internal account identifier.
+    //
+    // technicianId is the public-facing
+    // Technician identification number.
+    //
+    // The Technician creation controller
+    // must generate this ID once.
+    //
+    // Existing Technician records may
+    // temporarily have no technicianId.
+
+    technicianId: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: undefined,
+      validate: {
+        validator: function (value) {
+          if (!value) return true;
+
+          return /^TECH-\d{4,}$/.test(value);
+        },
+        message: "Technician ID must follow TECH-0001 format",
+      },
     },
 
     // ======================================
@@ -116,7 +133,6 @@ const userSchema = new mongoose.Schema(
       default: "",
     },
 
-    // No fixed A-F enum.
     departmentBlock: {
       type: String,
       trim: true,
@@ -125,7 +141,7 @@ const userSchema = new mongoose.Schema(
     },
 
     // ======================================
-    // TECHNICIAN / WORKER STATUS
+    // TECHNICIAN STATUS
     // ======================================
 
     shift: {
@@ -158,15 +174,9 @@ const userSchema = new mongoose.Schema(
 
     studentStatus: {
       type: String,
-
       enum: ["ACTIVE", "PENDING", "LEFT_HOSTEL"],
-
       default: function () {
-        if (this.isHosteller) {
-          return "PENDING";
-        }
-
-        return "ACTIVE";
+        return this.isHosteller ? "PENDING" : "ACTIVE";
       },
     },
 
@@ -213,7 +223,7 @@ const userSchema = new mongoose.Schema(
     },
 
     // ======================================
-    // WARDEN / STAFF ASSIGNMENTS
+    // STAFF ASSIGNMENTS
     // ======================================
 
     assignedHostel: {
@@ -226,12 +236,10 @@ const userSchema = new mongoose.Schema(
       uppercase: true,
       trim: true,
       default: "",
-
       validate: {
         validator: function (value) {
           return this.role !== "BLOCK_ADMIN" || Boolean(value && value.trim());
         },
-
         message: "Block Admin requires an assigned block",
       },
     },
@@ -259,7 +267,6 @@ const userSchema = new mongoose.Schema(
 
     isApproved: {
       type: Boolean,
-
       default: function () {
         return !this.isHosteller;
       },
@@ -290,7 +297,6 @@ const userSchema = new mongoose.Schema(
       default: true,
     },
 
-    // Soft archive.
     isDeleted: {
       type: Boolean,
       default: false,
@@ -388,9 +394,32 @@ const userSchema = new mongoose.Schema(
       default: null,
     },
   },
-
   {
     timestamps: true,
+  },
+);
+
+// ==========================================
+// UNIQUE TECHNICIAN ID INDEX
+// ==========================================
+
+// Partial unique index:
+// Only non-empty technicianId values
+// participate in uniqueness checks.
+//
+// Existing accounts without technicianId
+// are not affected.
+
+userSchema.index(
+  { technicianId: 1 },
+  {
+    unique: true,
+    partialFilterExpression: {
+      technicianId: {
+        $type: "string",
+        $gt: "",
+      },
+    },
   },
 );
 
@@ -447,7 +476,7 @@ userSchema.methods.generateResetPasswordToken = function () {
 };
 
 // ==========================================
-// EXPORT MODEL
+// EXPORT
 // ==========================================
 
 module.exports = mongoose.model("User", userSchema);

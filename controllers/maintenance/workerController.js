@@ -1,16 +1,30 @@
 "use strict";
 
 const mongoose = require("mongoose");
+
 const Complaint = require("../../models/Complaint");
 const User = require("../../models/User");
 const Category = require("../../models/Category");
 const JobCard = require("../../models/JobCard");
 const sendNotification = require("../../utils/sendNotification");
 
+// ==========================================
+// CONSTANTS
+// ==========================================
+
 const TECH_ROLES = ["TECHNICIAN", "WORKER"];
+
 const SHIFTS = ["DAY", "NIGHT", "24x7"];
+
 const MANAGED_STATUSES = ["ACTIVE", "OFFLINE", "ON_LEAVE"];
+
 const CLOSED_STATUSES = ["RESOLVED", "CLOSED", "REJECTED", "CANCELLED"];
+
+const TECH_COUNTER_ID = "ami_maintenance_technician_id";
+
+// ==========================================
+// COMMON HELPERS
+// ==========================================
 
 const upper = (value) =>
   String(value ?? "")
@@ -32,17 +46,142 @@ function fail(res, status, message) {
 function outputUser(user) {
   return {
     _id: user._id,
+
+    technicianId: user.technicianId || "",
+
+    employeeId: user.employeeId || "",
+
     name: user.name,
     email: user.email,
     phone: user.phone,
+
     role: user.role,
     department: user.department,
     shift: user.shift,
     status: user.status,
+
     isActive: user.isActive,
+    isDeleted: user.isDeleted,
+
     currentJobs: user.currentJobs,
     maxJobs: user.maxJobs,
   };
+}
+
+// ==========================================
+// PERMANENT TECHNICIAN ID GENERATION
+// ==========================================
+
+// Format:
+// TECH-000001
+// TECH-000002
+//
+// This counter is shared by all backend
+// instances through MongoDB.
+//
+// The existing User._id is never changed.
+//
+// Existing TECH IDs are checked before
+// creating a new Technician ID.
+
+async function generateTechnicianId() {
+  const counters = mongoose.connection.db.collection("counters");
+
+  const users = mongoose.connection.db.collection(User.collection.name);
+
+  // Check existing TECH IDs before advancing
+  // the counter. This also supports a database
+  // that already contains Technician IDs.
+
+  const existingIds = await users
+    .find(
+      {
+        technicianId: /^TECH-\d+$/,
+      },
+      {
+        projection: {
+          technicianId: 1,
+        },
+      },
+    )
+    .toArray();
+
+  let highestExisting = 0;
+
+  for (const user of existingIds) {
+    const match = /^TECH-(\d+)$/.exec(String(user.technicianId || ""));
+
+    if (!match) continue;
+
+    const sequence = Number(match[1]);
+
+    if (Number.isSafeInteger(sequence) && sequence > highestExisting) {
+      highestExisting = sequence;
+    }
+  }
+
+  // Initialize the counter only if missing.
+  // Existing counters are never reset here.
+
+  await counters.updateOne(
+    {
+      _id: TECH_COUNTER_ID,
+    },
+    {
+      $setOnInsert: {
+        sequence: highestExisting,
+      },
+    },
+    {
+      upsert: true,
+    },
+  );
+
+  // Atomic increment.
+
+  for (let attempt = 0; attempt < 10; attempt++) {
+    const result = await counters.findOneAndUpdate(
+      {
+        _id: TECH_COUNTER_ID,
+      },
+      {
+        $inc: {
+          sequence: 1,
+        },
+      },
+      {
+        returnDocument: "after",
+      },
+    );
+
+    // Compatible with native MongoDB driver
+    // versions returning either a document
+    // or { value: document }.
+
+    const counter = result?.value || result;
+
+    const sequence = Number(counter?.sequence);
+
+    if (!Number.isSafeInteger(sequence) || sequence < 1) {
+      throw new Error("Failed to generate Technician ID");
+    }
+
+    const technicianId = `TECH-${String(sequence).padStart(6, "0")}`;
+
+    // Defensive existence check.
+    // The unique DB index remains the
+    // final protection against duplicates.
+
+    const exists = await User.exists({
+      technicianId,
+    });
+
+    if (!exists) {
+      return technicianId;
+    }
+  }
+
+  throw new Error("Unable to allocate a unique Technician ID");
 }
 
 // ==========================================
@@ -51,6 +190,7 @@ function outputUser(user) {
 
 function parseHHMM(raw, fallback) {
   const value = String(raw || fallback);
+
   const match = /^(\d{1,2}):(\d{2})$/.exec(value);
 
   if (!match) {
@@ -119,10 +259,8 @@ function availabilityOf(worker) {
   const role = upper(worker.role);
   const status = upper(worker.status);
 
-  // Disabled / archived accounts
   const disabled = worker.isActive === false || worker.isDeleted === true;
 
-  // Technician unavailable for new work
   const unavailable = status === "ON_LEAVE" || status === "OFFLINE";
 
   const canWork = role === "TECHNICIAN" && !disabled && !unavailable;
@@ -136,15 +274,18 @@ function availabilityOf(worker) {
           ? "BUSY"
           : "AVAILABLE",
 
-    // No Day / Night / 24x7 restrictions
+    // Preserve existing policy:
+    // Off-duty scheduling is allowed.
+    // Offline/leave/archived blocked.
+
     canScheduleAssignment: canWork,
     canAssignNow: canWork,
     canStartNow: canWork,
   };
 }
 
-const openAssignedFilter = (workerId) => ({
-  assignedTo: workerId,
+const openAssignedFilter = (technicianId) => ({
+  assignedTo: technicianId,
 
   status: {
     $nin: CLOSED_STATUSES,
@@ -152,7 +293,7 @@ const openAssignedFilter = (workerId) => ({
 });
 
 // ==========================================
-// ADMIN-MANAGED CATEGORY LOOKUP
+// ACTIVE CATEGORY LOOKUP
 // ==========================================
 
 async function activeCategory(name) {
@@ -165,17 +306,24 @@ async function activeCategory(name) {
 
     categoryName: new RegExp(`^\\s*${escapeRegex(trimmed)}\\s*$`, "i"),
 
-    isActive: { $ne: false },
-    isDeleted: { $ne: true },
+    isActive: {
+      $ne: false,
+    },
+
+    isDeleted: {
+      $ne: true,
+    },
   }).lean();
 }
 
 // ==========================================
-// FIND TECHNICIAN
+// FIND EXISTING TECHNICIAN
 // ==========================================
 
 async function findTechnician(id) {
-  if (!validId(id)) return null;
+  if (!validId(id)) {
+    return null;
+  }
 
   return User.findOne({
     _id: id,
@@ -210,7 +358,10 @@ exports.getComplaintsForAssignment = async (_req, res) => {
   try {
     const complaints = await Complaint.find({})
       .populate("createdBy", "name email phone")
-      .populate("assignedTo", "name email phone department shift")
+      .populate(
+        "assignedTo",
+        "name email phone department shift technicianId employeeId",
+      )
       .sort({
         createdAt: -1,
       });
@@ -243,7 +394,9 @@ exports.getWorkers = async (_req, res) => {
       },
     })
       .select(
-        "name email phone role department shift status isActive isDeleted currentJobs maxJobs",
+        "name email phone role department " +
+          "shift status isActive isDeleted " +
+          "currentJobs maxJobs technicianId employeeId",
       )
       .sort({
         name: 1,
@@ -325,25 +478,36 @@ exports.createWorker = async (req, res) => {
       );
     }
 
-    if (
-      await User.exists({
-        email: cleanEmail,
-      })
-    ) {
+    const duplicateEmail = await User.exists({
+      email: cleanEmail,
+    });
+
+    if (duplicateEmail) {
       return fail(res, 409, "Email already registered");
     }
 
     const duplicatePhone = await User.exists({
       phone: cleanPhone,
-      role: { $in: TECH_ROLES },
-      isDeleted: { $ne: true },
+
+      role: {
+        $in: TECH_ROLES,
+      },
+
+      isDeleted: {
+        $ne: true,
+      },
     });
 
     if (duplicatePhone) {
       return fail(res, 409, "Technician mobile number already registered");
     }
 
-    // User.js will hash the password.
+    // Generate the permanent Technician ID.
+    // Never derive identity from a name.
+
+    const technicianId = await generateTechnicianId();
+
+    // User.js hashes the password.
 
     const technician = await User.create({
       name: cleanName,
@@ -351,11 +515,16 @@ exports.createWorker = async (req, res) => {
       phone: cleanPhone,
       password,
 
+      technicianId,
+
       role: "TECHNICIAN",
+
       department: categoryMaster.categoryName,
+
       designation: "Maintenance Technician",
 
       shift,
+
       status: "ACTIVE",
 
       currentJobs: 0,
@@ -364,15 +533,12 @@ exports.createWorker = async (req, res) => {
       isActive: true,
       isDeleted: false,
       isApproved: true,
-
-      // Staff onboarding by Manager.
-      // Email ownership verification can
-      // be added as a separate step.
       isVerified: true,
     });
 
     return res.status(201).json({
       success: true,
+
       accountCreated: true,
       loginCreated: true,
 
@@ -382,7 +548,11 @@ exports.createWorker = async (req, res) => {
     });
   } catch (error) {
     if (error?.code === 11000) {
-      return fail(res, 409, "Identifier already registered");
+      return fail(
+        res,
+        409,
+        "Email, mobile or Technician ID already registered",
+      );
     }
 
     console.error("CREATE TECHNICIAN ERROR:", error);
@@ -422,28 +592,42 @@ exports.activateLegacyTechnicianLogin = async (req, res) => {
     const worker = await User.findOne({
       _id: req.params.id,
       role: "WORKER",
-      isDeleted: { $ne: true },
+      isDeleted: {
+        $ne: true,
+      },
     });
 
     if (!worker) {
       return fail(res, 404, "Legacy Worker not found");
     }
 
-    if (
-      await User.exists({
-        email,
-        _id: { $ne: worker._id },
-      })
-    ) {
+    const existingEmail = await User.exists({
+      email,
+      _id: {
+        $ne: worker._id,
+      },
+    });
+
+    if (existingEmail) {
       return fail(res, 409, "Email is already in use");
     }
+
+    // Keep the existing MongoDB User ID.
 
     worker.email = email;
     worker.password = password;
     worker.role = "TECHNICIAN";
+
     worker.isVerified = true;
     worker.isApproved = true;
+
     worker.designation = "Maintenance Technician";
+
+    // Assign a readable ID only if missing.
+
+    if (!worker.technicianId) {
+      worker.technicianId = await generateTechnicianId();
+    }
 
     await worker.save();
 
@@ -456,7 +640,7 @@ exports.activateLegacyTechnicianLogin = async (req, res) => {
     });
   } catch (error) {
     if (error?.code === 11000) {
-      return fail(res, 409, "Email already in use");
+      return fail(res, 409, "Email or Technician ID already in use");
     }
 
     console.error("UPGRADE WORKER ERROR:", error);
@@ -495,10 +679,19 @@ exports.updateWorker = async (req, res) => {
       }
 
       const duplicatePhone = await User.exists({
-        _id: { $ne: technician._id },
+        _id: {
+          $ne: technician._id,
+        },
+
         phone: cleanPhone,
-        role: { $in: TECH_ROLES },
-        isDeleted: { $ne: true },
+
+        role: {
+          $in: TECH_ROLES,
+        },
+
+        isDeleted: {
+          $ne: true,
+        },
       });
 
       if (duplicatePhone) {
@@ -524,7 +717,7 @@ exports.updateWorker = async (req, res) => {
           return fail(
             res,
             409,
-            "Complete/reassign active jobs before changing Technician category",
+            "Complete or reassign active jobs before changing Technician category",
           );
         }
       }
@@ -540,11 +733,15 @@ exports.updateWorker = async (req, res) => {
       technician.shift = shift;
     }
 
+    // Do not change the existing User._id
+    // or permanent technicianId.
+
     await technician.save();
 
     return res.json({
       success: true,
       message: "Technician updated",
+
       worker: outputUser(technician),
     });
   } catch (error) {
@@ -611,7 +808,10 @@ exports.deleteWorker = async (req, res) => {
 
       JobCard.countDocuments({
         assignedWorker: technician._id,
-        isCompleted: { $ne: true },
+
+        isCompleted: {
+          $ne: true,
+        },
       }),
     ]);
 
@@ -626,6 +826,7 @@ exports.deleteWorker = async (req, res) => {
     technician.isActive = false;
     technician.isDeleted = true;
     technician.status = "OFFLINE";
+
     technician.deletedAt = new Date();
 
     technician.deletedBy = req.user?._id || req.user?.id || null;
@@ -645,8 +846,10 @@ exports.deleteWorker = async (req, res) => {
 };
 
 // ==========================================
-// ASSIGN TECHNICIAN
-// ASSIGNMENT IS SCHEDULING, NOT WORK START
+// ASSIGN EXISTING TECHNICIAN
+//
+// Assignment is scheduling.
+// It does not create a new User.
 // ==========================================
 
 exports.assignWorker = async (req, res) => {
@@ -687,8 +890,6 @@ exports.assignWorker = async (req, res) => {
       return fail(res, 409, "Complaint is not eligible for assignment");
     }
 
-    // Validate category from Admin Master.
-
     const master = await activeCategory(complaint.category);
 
     if (!master) {
@@ -707,10 +908,7 @@ exports.assignWorker = async (req, res) => {
       );
     }
 
-    // Off-duty assignment is allowed.
-    // Disabled, offline and leave are blocked.
-
-    const duty = availabilityOf(technician, complaint);
+    const duty = availabilityOf(technician);
 
     if (!duty.canScheduleAssignment) {
       return fail(
@@ -719,8 +917,6 @@ exports.assignWorker = async (req, res) => {
         `Technician cannot be assigned: ${duty.availability}`,
       );
     }
-
-    // Maximum open complaints per Technician.
 
     const openJobs = await Complaint.countDocuments(
       openAssignedFilter(technician._id),
@@ -734,8 +930,6 @@ exports.assignWorker = async (req, res) => {
       return fail(res, 409, "Technician has reached maximum open jobs");
     }
 
-    // Check schema compatibility.
-
     const statuses = Complaint.schema.path("status")?.enumValues || [];
 
     if (statuses.length && !statuses.includes("ASSIGNED")) {
@@ -746,7 +940,9 @@ exports.assignWorker = async (req, res) => {
       );
     }
 
-    // Atomic single-complaint assignment.
+    // ======================================
+    // ATOMIC ASSIGNMENT
+    // ======================================
 
     const assigned = await Complaint.findOneAndUpdate(
       {
@@ -762,6 +958,7 @@ exports.assignWorker = async (req, res) => {
       },
       {
         $set: {
+          // Existing permanent User ID.
           assignedTo: technician._id,
 
           assignedBy: req.user?._id || req.user?.id,
@@ -769,8 +966,6 @@ exports.assignWorker = async (req, res) => {
           workerAssigned: true,
 
           status: "ASSIGNED",
-
-          // startedAt is NOT set here.
         },
       },
       {
@@ -783,9 +978,9 @@ exports.assignWorker = async (req, res) => {
       return fail(res, 409, "Complaint changed; refresh and retry");
     }
 
-    // Normal complaints remain digital.
-    // No automatic physical JobCard here.
-    // Material decision/history are preserved.
+    // ======================================
+    // NOTIFICATIONS
+    // ======================================
 
     await notifySafely({
       receiver: technician._id,
@@ -842,6 +1037,11 @@ exports.assignWorker = async (req, res) => {
 
       technician: {
         _id: technician._id,
+
+        technicianId: technician.technicianId || "",
+
+        employeeId: technician.employeeId || "",
+
         name: technician.name,
 
         availability: duty.availability,
@@ -906,7 +1106,7 @@ exports.startMyWork = async (req, res) => {
       return fail(res, 409, "Only ASSIGNED jobs can be started");
     }
 
-    const duty = availabilityOf(technician, complaint);
+    const duty = availabilityOf(technician);
 
     if (!duty.canStartNow) {
       return fail(
@@ -929,6 +1129,7 @@ exports.startMyWork = async (req, res) => {
       {
         $set: {
           status: "IN_PROGRESS",
+
           startedAt,
         },
       },

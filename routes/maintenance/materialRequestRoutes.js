@@ -9,14 +9,16 @@ const {
   getComplaintMaterialRequests,
   createMaterialRequest,
   deleteMaterialRequest,
+  approveTechnicianMaterialRequest,
+  rejectTechnicianMaterialRequest,
 } = require("../../controllers/maintenance/materialRequestController");
 
 const { protect } = require("../../middleware/authMiddleware");
 const roleMiddleware = require("../../middleware/roleMiddleware");
 
-// ======================================================
-// AMI MAINTENANCE — MATERIAL REQUEST ROUTES
-// ======================================================
+// ==========================================
+// ROLE ACCESS
+// ==========================================
 
 const managerAccess = [protect, roleMiddleware("MAINTENANCE_MANAGER")];
 
@@ -32,39 +34,39 @@ const requesterAccess = [
   roleMiddleware("MAINTENANCE_MANAGER", "TECHNICIAN"),
 ];
 
-// ------------------------------------------------------
-// Existing GET ALL — Manager and Store Manager
-// ------------------------------------------------------
+// ==========================================
+// EXISTING ROUTES
+// ==========================================
 
+// Manager and Store Manager
 router.get("/", ...managerAndStoreAccess, getAllMaterialRequests);
 
-// ------------------------------------------------------
-// NEW — Technician's assigned complaint requests
-// ------------------------------------------------------
-
+// Technician requests
 router.get("/my-requests", ...technicianAccess, getMyMaterialRequests);
 
-// ------------------------------------------------------
-// NEW — Complaint-wise history for Manager / Technician
-// ------------------------------------------------------
-
+// Complaint-wise requests
 router.get(
   "/complaint/:complaintId",
   ...requesterAccess,
   getComplaintMaterialRequests,
 );
 
-// ------------------------------------------------------
-// CREATE — Manager or assigned Technician
-// Controller applies stricter ownership checks.
-// ------------------------------------------------------
-
+// Create material request
 router.post("/create", ...requesterAccess, createMaterialRequest);
 
-// ------------------------------------------------------
-// DELETE — Maintenance Manager only
-// ------------------------------------------------------
-
+// Delete pending material request
 router.delete("/:id", ...managerAccess, deleteMaterialRequest);
+
+router.put(
+  "/:id/manager-approve",
+  ...managerAccess,
+  approveTechnicianMaterialRequest,
+);
+
+router.put(
+  "/:id/manager-reject",
+  ...managerAccess,
+  rejectTechnicianMaterialRequest,
+);
 
 module.exports = router;

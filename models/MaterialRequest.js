@@ -1,15 +1,20 @@
+"use strict";
+
 const mongoose = require("mongoose");
+
+const { Schema } = mongoose;
 
 // ==========================================
 // MATERIAL ITEM SCHEMA
 // ==========================================
 
-const materialItemSchema = new mongoose.Schema(
+const materialItemSchema = new Schema(
   {
     itemName: {
       type: String,
       required: true,
       trim: true,
+      maxlength: 150,
     },
 
     quantity: {
@@ -38,7 +43,18 @@ const materialItemSchema = new mongoose.Schema(
     },
 
     // ======================================
-    // STORE APPROVAL
+    // MAINTENANCE MANAGER APPROVAL
+    // ======================================
+
+    managerApprovedQuantity: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    // ======================================
+    // STORE MANAGER APPROVAL
+    // Existing fields preserved
     // ======================================
 
     approvedQuantity: {
@@ -69,6 +85,7 @@ const materialItemSchema = new mongoose.Schema(
     storeRemarks: {
       type: String,
       default: "",
+      trim: true,
     },
   },
   {
@@ -80,7 +97,7 @@ const materialItemSchema = new mongoose.Schema(
 // MATERIAL REQUEST SCHEMA
 // ==========================================
 
-const materialRequestSchema = new mongoose.Schema(
+const materialRequestSchema = new Schema(
   {
     // ======================================
     // REQUEST ID
@@ -88,9 +105,9 @@ const materialRequestSchema = new mongoose.Schema(
 
     requestId: {
       type: String,
-      unique: true,
       required: true,
-      index: true,
+      unique: true,
+      trim: true,
     },
 
     // ======================================
@@ -98,28 +115,29 @@ const materialRequestSchema = new mongoose.Schema(
     // ======================================
 
     complaint: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: Schema.Types.ObjectId,
       ref: "Complaint",
       required: true,
+      index: true,
     },
 
     // ======================================
-    // JOB CARD
-    // OPTIONAL - WILL BE LINKED LATER
+    // OPTIONAL JOB CARD
     // ======================================
 
     jobCard: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: Schema.Types.ObjectId,
       ref: "JobCard",
       default: null,
     },
 
     // ======================================
-    // WORKER
+    // ASSIGNED TECHNICIAN
+    // Keep assignedWorker for compatibility
     // ======================================
 
     assignedWorker: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: Schema.Types.ObjectId,
       ref: "User",
       default: null,
     },
@@ -129,44 +147,89 @@ const materialRequestSchema = new mongoose.Schema(
     // ======================================
 
     requestedBy: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
 
     // ======================================
-    // MULTIPLE MATERIALS
+    // REQUEST SOURCE
+    // ======================================
+
+    requestSource: {
+      type: String,
+      enum: ["MAINTENANCE_MANAGER", "TECHNICIAN"],
+      default: "MAINTENANCE_MANAGER",
+      index: true,
+    },
+
+    // ======================================
+    // MATERIALS
     // ======================================
 
     materials: {
       type: [materialItemSchema],
-
       validate: {
         validator: function (value) {
-          return value && value.length > 0;
+          return Array.isArray(value) && value.length > 0;
         },
-
         message: "At least one material is required",
       },
     },
 
     // ======================================
-    // REASON
+    // REQUEST REASON
     // ======================================
 
     reason: {
       type: String,
       required: true,
       trim: true,
+      minlength: 5,
+      maxlength: 1000,
     },
 
     // ======================================
-    // OVERALL STATUS
+    // MAINTENANCE MANAGER DECISION
+    // ======================================
+
+    managerApprovalStatus: {
+      type: String,
+      enum: ["PENDING", "APPROVED", "REJECTED"],
+      default: "PENDING",
+      index: true,
+    },
+
+    managerApprovedBy: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
+
+    managerApprovedAt: {
+      type: Date,
+      default: null,
+    },
+
+    managerRejectedAt: {
+      type: Date,
+      default: null,
+    },
+
+    managerRemarks: {
+      type: String,
+      trim: true,
+      maxlength: 1000,
+      default: "",
+    },
+
+    // ======================================
+    // STORE REQUEST STATUS
+    // Existing status retained
     // ======================================
 
     status: {
       type: String,
-
       enum: [
         "PENDING",
         "APPROVED_BY_STORE",
@@ -176,16 +239,16 @@ const materialRequestSchema = new mongoose.Schema(
         "OUT_OF_STOCK",
         "ISSUED",
       ],
-
       default: "PENDING",
+      index: true,
     },
 
     // ======================================
-    // STORE DETAILS
+    // STORE MANAGER DETAILS
     // ======================================
 
     approvedByStore: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: Schema.Types.ObjectId,
       ref: "User",
       default: null,
     },
@@ -196,7 +259,7 @@ const materialRequestSchema = new mongoose.Schema(
     },
 
     issuedBy: {
-      type: mongoose.Schema.Types.ObjectId,
+      type: Schema.Types.ObjectId,
       ref: "User",
       default: null,
     },
@@ -215,36 +278,64 @@ const materialRequestSchema = new mongoose.Schema(
     storeRemarks: {
       type: String,
       default: "",
+      trim: true,
     },
   },
   {
-    // Automatically creates createdAt + updatedAt
     timestamps: true,
   },
 );
 
 // ==========================================
-// AUTO DELETE AFTER 7 DAYS
-// ==========================================
-//
-// createdAt is automatically generated because
-// timestamps: true is enabled above.
-//
-// 7 days = 7 * 24 * 60 * 60
-//        = 604800 seconds
-//
-// MongoDB TTL will automatically delete the
-// complete MaterialRequest document after 7 days.
+// DATABASE INDEXES
 // ==========================================
 
-materialRequestSchema.index(
-  {
-    createdAt: 1,
-  },
-  {
-    expireAfterSeconds: 604800,
-  },
-);
+materialRequestSchema.index({
+  complaint: 1,
+  createdAt: -1,
+});
+
+materialRequestSchema.index({
+  requestSource: 1,
+  managerApprovalStatus: 1,
+  createdAt: -1,
+});
+
+materialRequestSchema.index({
+  status: 1,
+  createdAt: -1,
+});
+
+// ==========================================
+// VALIDATION
+// ==========================================
+
+materialRequestSchema.pre("validate", function (next) {
+  if (this.requestSource === "TECHNICIAN" && this.isNew) {
+    this.managerApprovalStatus = "PENDING";
+    this.managerApprovedBy = null;
+    this.managerApprovedAt = null;
+    this.managerRejectedAt = null;
+  }
+
+  if (this.requestSource === "MAINTENANCE_MANAGER" && this.isNew) {
+    this.managerApprovalStatus = "APPROVED";
+  }
+
+  next();
+});
+
+// ==========================================
+// NO AUTOMATIC DELETION
+// ==========================================
+
+// Material request records must remain
+// permanently available for audit,
+// complaint history, Store Manager reports,
+// vouchers and technician history.
+//
+// The old MongoDB TTL index must be removed
+// separately after verifying the exact index.
 
 // ==========================================
 // EXPORT
