@@ -15,17 +15,28 @@ const damagedItemRoutes = require("./damagedItemRoutes");
 const retrievedItemRoutes = require("./retrievedItemRoutes");
 const stockInwardRoutes = require("./stockInwardRoutes");
 
-// NEW REPORTS
+// REPORTS
 const storeReportRoutes = require("./storeReportRoutes");
 
+// MATERIAL RECEIVING CONTROLLER
 const materialReceivingController = require("../../controllers/store/materialReceivingController");
+
+// ==========================================
+// AUTHENTICATION
+// ==========================================
 
 router.use(protect);
 
-// DASHBOARD
+// ==========================================
+// STORE MANAGER DASHBOARD
+// ==========================================
+
 router.use("/dashboard", roleMiddleware("STORE_MANAGER"), dashboardRoutes);
 
+// ==========================================
 // INVENTORY
+// ==========================================
+
 router.use("/inventory", roleMiddleware("STORE_MANAGER"), inventoryRoutes);
 
 router.use(
@@ -34,45 +45,71 @@ router.use(
   addInventoryRoutes,
 );
 
-// STOCK
+// ==========================================
+// STOCK MANAGEMENT
+// ==========================================
+
 router.use("/stock", roleMiddleware("STORE_MANAGER"), stockRoutes);
 
 router.use("/low-stock", roleMiddleware("STORE_MANAGER"), lowStockRoutes);
 
 router.use("/stock-inward", roleMiddleware("STORE_MANAGER"), stockInwardRoutes);
 
-// REQUESTS
+// ==========================================
+// MATERIAL REQUESTS
+// Preserve existing request route permissions
+// ==========================================
+
 router.use("/requests", requestRoutes);
 
+// ==========================================
 // ISSUED ITEMS
+// ==========================================
+
 router.use("/issued-items", roleMiddleware("STORE_MANAGER"), issuedItemRoutes);
 
+// ==========================================
 // RETRIEVED MATERIAL
+// ==========================================
+
 router.use(
   "/retrieved-items",
   roleMiddleware("STORE_MANAGER"),
   retrievedItemRoutes,
 );
 
-// LEGACY DAMAGED ITEMS
+// ==========================================
+// DAMAGED MATERIAL
+// ==========================================
+
 router.use(
   "/damaged-items",
   roleMiddleware("STORE_MANAGER"),
   damagedItemRoutes,
 );
 
-// TECHNICIAN RECEIVING
+// ==========================================
+// TECHNICIAN MATERIAL RECEIVING
+// FIX: WORKER -> TECHNICIAN
+// ==========================================
+
+// Technician views materials issued to them
 router.get(
   "/material-receiving/my-materials",
-  roleMiddleware("WORKER"),
+  roleMiddleware("TECHNICIAN"),
   materialReceivingController.getMyMaterials,
 );
 
+// Technician confirms actual received quantity
 router.post(
   "/material-receiving/confirm",
-  roleMiddleware("WORKER"),
+  roleMiddleware("TECHNICIAN"),
   materialReceivingController.confirmReceiving,
 );
+
+// ==========================================
+// STORE MANAGER RECEIVING AUDIT
+// ==========================================
 
 router.get(
   "/material-receiving/all",
