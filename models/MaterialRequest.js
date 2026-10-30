@@ -310,19 +310,25 @@ materialRequestSchema.index({
 // VALIDATION
 // ==========================================
 
-materialRequestSchema.pre("validate", function (next) {
-  if (this.requestSource === "TECHNICIAN" && this.isNew) {
+// ==========================================
+// MANAGER APPROVAL DEFAULTS
+// MONGOOSE MIDDLEWARE FIX
+// ==========================================
+
+materialRequestSchema.pre("validate", function () {
+  if (!this.isNew) return;
+
+  if (this.requestSource === "TECHNICIAN") {
     this.managerApprovalStatus = "PENDING";
+
     this.managerApprovedBy = null;
     this.managerApprovedAt = null;
     this.managerRejectedAt = null;
   }
 
-  if (this.requestSource === "MAINTENANCE_MANAGER" && this.isNew) {
+  if (this.requestSource === "MAINTENANCE_MANAGER") {
     this.managerApprovalStatus = "APPROVED";
   }
-
-  next();
 });
 
 // ==========================================
