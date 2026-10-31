@@ -31,11 +31,13 @@ const preferredVisitTimeSchema = new mongoose.Schema(
   { _id: false },
 );
 
-preferredVisitTimeSchema.pre("validate", function (next) {
+preferredVisitTimeSchema.pre("validate", function () {
   const { startTime, endTime } = this;
 
-  // Legacy complaints may not contain preferred timing.
-  if (!startTime && !endTime) return next();
+  // Allow old complaints without preferred visit timing.
+  if (!startTime && !endTime) {
+    return;
+  }
 
   const start = toMinutes(startTime);
   const end = toMinutes(endTime);
@@ -48,14 +50,11 @@ preferredVisitTimeSchema.pre("validate", function (next) {
     end > 1020 ||
     end - start < 120
   ) {
-    return next(
-      new Error(
-        "Preferred visit time must be between 10:00 AM and 5:00 PM with a minimum 2-hour duration.",
-      ),
+    this.invalidate(
+      "startTime",
+      "Preferred visit time must be between 10:00 AM and 5:00 PM with a minimum 2-hour duration.",
     );
   }
-
-  next();
 });
 
 const complaintSchema = new mongoose.Schema(
