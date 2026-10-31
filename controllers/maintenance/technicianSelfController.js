@@ -25,12 +25,13 @@ exports.getMyJobs = async (req, res) => {
         "complaintId title description titleHindi descriptionHindi " +
           "status priority category complaintType isEmergency " +
           "hostel block floor roomNumber materialRequired materialStatus " +
-          "createdAt startedAt completedAt deadline assignedAt assignedTo",
+          "createdAt startedAt completedAt deadline assignedAt assignedTo " +
+          "preferredVisitTime",
       )
       .sort({ createdAt: -1 })
       .lean();
 
-    return res.json({
+    return res.status(200).json({
       success: true,
       count: complaints.length,
       complaints,
