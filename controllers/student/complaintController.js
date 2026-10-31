@@ -1,31 +1,25 @@
 "use strict";
 
 const crypto = require("crypto");
-
 const Complaint = require("../../models/Complaint");
 const Category = require("../../models/Category");
 const User = require("../../models/User");
-
 const sendNotification = require("../../utils/sendNotification");
 const translate = require("translate-google");
-
 const { loadComplaintFormCatalog } = require("./complaintFormConfigController");
 
-// =====================================================
+// ==========================================
 // HELPERS
-// =====================================================
+// ==========================================
 
 const text = (value) => String(value ?? "").trim();
-
 const upper = (value) => text(value).toUpperCase();
-
 const normalize = (value) => upper(value).replace(/[^A-Z0-9]/g, "");
-
 const userId = (req) => req.user?._id || req.user?.id;
 
-// =====================================================
-// TECHNICAL TERMS FOR HINDI TRANSLATION
-// =====================================================
+// ==========================================
+// TECHNICAL TERMS
+// ==========================================
 
 const technicalTerms = {
   "Tube Light": "ट्यूब लाइट",
@@ -41,16 +35,14 @@ const technicalTerms = {
   "Door Lock": "दरवाज़े का ताला",
 };
 
-// =====================================================
+// ==========================================
 // NOTIFICATION HELPERS
-// =====================================================
+// ==========================================
 
 const notificationPriority = (value) => {
   const priority = upper(value);
 
-  if (priority === "URGENT") {
-    return "CRITICAL";
-  }
+  if (priority === "URGENT") return "CRITICAL";
 
   if (["LOW", "MEDIUM", "HIGH"].includes(priority)) {
     return priority;
@@ -90,10 +82,6 @@ function notice(
   });
 }
 
-// =====================================================
-// VALID COMPLAINT STATUSES
-// =====================================================
-
 const statuses = [
   "PENDING",
   "ASSIGNED",
@@ -105,42 +93,19 @@ const statuses = [
   "REOPENED",
 ];
 
-// =====================================================
-// HOSTEL FLOOR AUTO DETECTION
-//
-// G    => Ground Floor
-// F    => First Floor
-// S2   => Second Floor
-// S3   => Second Floor (as per university rule)
-// =====================================================
+// ==========================================
+// HOSTEL HELPERS
+// ==========================================
 
 function detectFloor(roomNumber) {
   const room = normalize(roomNumber);
 
-  if (room.startsWith("G")) {
-    return "Ground Floor";
-  }
-
-  if (room.startsWith("F")) {
-    return "First Floor";
-  }
-
-  if (/^S[23]/.test(room)) {
-    return "Second Floor";
-  }
+  if (room.startsWith("G")) return "Ground Floor";
+  if (room.startsWith("F")) return "First Floor";
+  if (/^S[23]/.test(room)) return "Second Floor";
 
   return "";
 }
-
-// =====================================================
-// HOSTEL NAME NORMALIZATION
-//
-// H1
-// Hostel H1
-// Boys Hostel H1
-//
-// These should refer to the same hostel.
-// =====================================================
 
 function normalizeHostel(value) {
   const raw =
@@ -158,176 +123,63 @@ function normalizeHostel(value) {
 function hostelMatches(hostel, registeredHostel) {
   const studentHostel = normalizeHostel(registeredHostel);
 
-  if (!studentHostel) {
-    return false;
-  }
+  if (!studentHostel) return false;
 
   return [hostel.id, hostel.code, hostel.name].some(
     (value) => normalizeHostel(value) === studentHostel,
   );
 }
 
-// =====================================================
-// INDIAN STANDARD TIME
-// =====================================================
+// ==========================================
+// NEW PREFERRED VISIT TIME VALIDATION
+// 10:00 AM - 5:00 PM
+// MINIMUM 2 HOURS
+// ==========================================
 
-function getIST() {
-  const parts = Object.fromEntries(
-    new Intl.DateTimeFormat("en-GB", {
-      timeZone: "Asia/Kolkata",
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-      hour: "2-digit",
-      minute: "2-digit",
-      hourCycle: "h23",
-    })
-      .formatToParts(new Date())
-      .map(({ type, value }) => [type, value]),
-  );
-
-  return {
-    date: `${parts.year}-${parts.month}-${parts.day}`,
-
-    minutes: Number(parts.hour) * 60 + Number(parts.minute),
-  };
-}
-
-// =====================================================
-// CONVERT TIME TO MINUTES
-// =====================================================
-
-function minutesFromClock(value) {
-  const match = /^(0?[1-9]|1[0-2]):([0-5]\d)\s*(AM|PM)$/i.exec(text(value));
-
-  if (!match) {
-    return null;
-  }
-
-  const hour = Number(match[1]);
-  const minute = Number(match[2]);
-  const period = upper(match[3]);
-
-  const hour24 = (hour % 12) + (period === "PM" ? 12 : 0);
-
-  return hour24 * 60 + minute;
-}
-
-// =====================================================
-// VALIDATE ISO DATE
-// =====================================================
-
-function validDay(value) {
-  const dateText = text(value);
-
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateText)) {
-    return false;
-  }
-
-  const date = new Date(`${dateText}T00:00:00.000Z`);
-
-  return (
-    !Number.isNaN(date.getTime()) &&
-    date.toISOString().slice(0, 10) === dateText
-  );
-}
-
-// =====================================================
-// VALIDATE THREE PREFERRED VISIT SLOTS
-//
-// Exactly 3 slots
-// Each slot 2 hours
-// Same date
-// No duplicates
-// No past slots
-// =====================================================
-
-function validateSlots(value) {
-  if (!Array.isArray(value) || value.length !== 3) {
+function validatePreferredVisitTime(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     return {
-      error: "Select exactly three preferred 2-hour visit slots",
+      error: "Select your preferred maintenance visit time",
     };
   }
 
-  const now = getIST();
-  const used = new Set();
-  const slots = [];
+  const startTime = text(value.startTime);
+  const endTime = text(value.endTime);
 
-  const allowedStarts = new Set([
-    540, // 09:00 AM
-    660, // 11:00 AM
-    780, // 01:00 PM
-    900, // 03:00 PM
-  ]);
+  const pattern = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-  let sharedDate = "";
+  if (!pattern.test(startTime) || !pattern.test(endTime)) {
+    return {
+      error: "Use HH:mm (24-hour) format for both times",
+    };
+  }
 
-  for (const [index, raw] of value.entries()) {
-    const date = text(raw?.date);
-    const from = text(raw?.startTime);
-    const to = text(raw?.endTime);
+  const toMinutes = (clock) => {
+    const [hour, minute] = clock.split(":").map(Number);
+    return hour * 60 + minute;
+  };
 
-    const start = minutesFromClock(from);
-    const end = minutesFromClock(to);
+  const start = toMinutes(startTime);
+  const end = toMinutes(endTime);
 
-    // Validate date
-    if (
-      !validDay(date) ||
-      date < now.date ||
-      (sharedDate && sharedDate !== date)
-    ) {
-      return {
-        error: "All three slots must use one valid current or future date",
-      };
-    }
-
-    sharedDate = date;
-
-    // Validate 2-hour time windows
-    if (
-      start === null ||
-      end === null ||
-      end - start !== 120 ||
-      !allowedStarts.has(start)
-    ) {
-      return {
-        error: "Choose valid 2-hour slots between 9 AM and 5 PM",
-      };
-    }
-
-    // Reject started or past windows
-    if (date === now.date && start <= now.minutes) {
-      return {
-        error: "A preferred slot has already started. Choose a later date",
-      };
-    }
-
-    const key = `${date}:${start}`;
-
-    if (used.has(key)) {
-      return {
-        error: "Duplicate preferred slots are not allowed",
-      };
-    }
-
-    used.add(key);
-
-    slots.push({
-      preference: index + 1,
-      date,
-      startTime: from,
-      endTime: to,
-    });
+  if (start < 600 || start > 900 || end > 1020 || end - start < 120) {
+    return {
+      error:
+        "Select a visit window between 10 AM and 5 PM with at least 2 hours available",
+    };
   }
 
   return {
-    slots,
+    preferredVisitTime: {
+      startTime,
+      endTime,
+    },
   };
 }
 
-// =====================================================
+// ==========================================
 // SAFE HINDI TRANSLATION
-// =====================================================
+// ==========================================
 
 async function translateSafe(value) {
   try {
@@ -338,22 +190,17 @@ async function translateSafe(value) {
     return text(result);
   } catch (error) {
     console.warn("TRANSLATION WARNING:", error.message);
-
     return "";
   }
 }
 
-// =====================================================
+// ==========================================
 // CREATE COMPLAINT
-// =====================================================
+// ==========================================
 
 async function createComplaint(req, res) {
   try {
     const creatorId = userId(req);
-
-    // ===============================================
-    // AUTHENTICATION
-    // ===============================================
 
     if (!creatorId) {
       return res.status(401).json({
@@ -361,10 +208,6 @@ async function createComplaint(req, res) {
         message: "Login required",
       });
     }
-
-    // ===============================================
-    // FETCH STUDENT PROFILE
-    // ===============================================
 
     const student = await User.findById(creatorId)
       .select(
@@ -388,9 +231,9 @@ async function createComplaint(req, res) {
 
     const body = req.body || {};
 
-    // ===============================================
-    // VALIDATE ADMIN LOCATION KEY
-    // ===============================================
+    // ======================================
+    // VALIDATE LOCATION
+    // ======================================
 
     const match = /^(HOSTEL|BLOCK|OTHER):([a-f\d]{24})$/i.exec(
       text(body.locationKey),
@@ -404,12 +247,7 @@ async function createComplaint(req, res) {
     }
 
     const type = upper(match[1]);
-
     const locationId = match[2].toLowerCase();
-
-    // ===============================================
-    // MAP LOCATION TO EXISTING COMPLAINT AREA
-    // ===============================================
 
     const area =
       type === "HOSTEL" ? "HOSTEL" : type === "BLOCK" ? "DEPARTMENT" : "CAMPUS";
@@ -421,10 +259,6 @@ async function createComplaint(req, res) {
       });
     }
 
-    // ===============================================
-    // DAY SCHOLAR HOSTEL RESTRICTION
-    // ===============================================
-
     if (type === "HOSTEL" && student.isHosteller !== true) {
       return res.status(403).json({
         success: false,
@@ -432,9 +266,9 @@ async function createComplaint(req, res) {
       });
     }
 
-    // ===============================================
-    // FETCH ADMIN MASTER DATA
-    // ===============================================
+    // ======================================
+    // ADMIN MASTER DATA
+    // ======================================
 
     const catalog = await loadComplaintFormCatalog();
 
@@ -453,10 +287,6 @@ async function createComplaint(req, res) {
       });
     }
 
-    // ===============================================
-    // CATEGORY FROM ADMIN
-    // ===============================================
-
     const category = catalog.categories.find(
       (item) => normalize(item.name) === normalize(body.category),
     );
@@ -468,9 +298,9 @@ async function createComplaint(req, res) {
       });
     }
 
-    // ===============================================
-    // BASIC COMPLAINT VALIDATION
-    // ===============================================
+    // ======================================
+    // BASIC VALIDATION
+    // ======================================
 
     const title = text(body.title);
     const description = text(body.description);
@@ -500,22 +330,22 @@ async function createComplaint(req, res) {
       });
     }
 
-    // ===============================================
-    // VALIDATE 3 VISIT SLOTS
-    // ===============================================
+    // ======================================
+    // NEW SINGLE PREFERRED TIME WINDOW
+    // ======================================
 
-    const slotResult = validateSlots(body.preferredVisitSlots);
+    const visitResult = validatePreferredVisitTime(body.preferredVisitTime);
 
-    if (slotResult.error) {
+    if (visitResult.error) {
       return res.status(400).json({
         success: false,
-        message: slotResult.error,
+        message: visitResult.error,
       });
     }
 
-    // ===============================================
-    // SAFE COMPLAINT DATA
-    // ===============================================
+    // ======================================
+    // PREPARE COMPLAINT DATA
+    // ======================================
 
     const data = {
       title,
@@ -523,8 +353,6 @@ async function createComplaint(req, res) {
       subCategory,
 
       category: category.name,
-
-      // Priority always comes from Admin
       priority: category.priority,
 
       complaintArea: area,
@@ -536,17 +364,19 @@ async function createComplaint(req, res) {
       floor: "",
       assignedDepartment: "",
 
-      preferredVisitSlots: slotResult.slots,
+      preferredVisitTime: visitResult.preferredVisitTime,
 
-      // Legacy fields for older pages
-      availableFrom: slotResult.slots[0].startTime,
+      // Legacy compatibility
+      preferredVisitSlots: [],
 
-      availableTo: slotResult.slots[0].endTime,
+      availableFrom: visitResult.preferredVisitTime.startTime,
+
+      availableTo: visitResult.preferredVisitTime.endTime,
     };
 
-    // ===============================================
+    // ======================================
     // HOSTEL COMPLAINT
-    // ===============================================
+    // ======================================
 
     if (type === "HOSTEL") {
       if (!hostelMatches(place, student.hostel)) {
@@ -564,7 +394,6 @@ async function createComplaint(req, res) {
       }
 
       data.hostel = text(student.hostel);
-
       data.roomNumber = text(student.roomNumber);
 
       data.floor = detectFloor(student.roomNumber) || text(student.floor);
@@ -572,9 +401,9 @@ async function createComplaint(req, res) {
       data.block = text(student.block);
     }
 
-    // ===============================================
-    // ACADEMIC BLOCK COMPLAINT
-    // ===============================================
+    // ======================================
+    // ACADEMIC BLOCK
+    // ======================================
     else if (type === "BLOCK") {
       data.block = place.code;
 
@@ -586,9 +415,9 @@ async function createComplaint(req, res) {
             );
     }
 
-    // ===============================================
-    // OTHER LOCATION COMPLAINT
-    // ===============================================
+    // ======================================
+    // OTHER LOCATION
+    // ======================================
     else {
       if (Array.isArray(place.areas) && place.areas.length) {
         const prefix = `${place.name} - `;
@@ -616,9 +445,9 @@ async function createComplaint(req, res) {
       }
     }
 
-    // ===============================================
-    // HINDI AUTO TRANSLATION
-    // ===============================================
+    // ======================================
+    // HINDI TRANSLATION
+    // ======================================
 
     const [translatedTitle, translatedDescription] = await Promise.all([
       translateSafe(title),
@@ -629,9 +458,9 @@ async function createComplaint(req, res) {
       (key) => upper(key) === upper(title),
     );
 
-    // ===============================================
-    // PREPARE COMPLAINT DOCUMENT
-    // ===============================================
+    // ======================================
+    // COMPLAINT DOCUMENT
+    // ======================================
 
     const common = {
       ...data,
@@ -656,9 +485,9 @@ async function createComplaint(req, res) {
       ],
     };
 
-    // ===============================================
-    // CREATE UNIQUE COMPLAINT ID
-    // ===============================================
+    // ======================================
+    // UNIQUE COMPLAINT ID
+    // ======================================
 
     let complaint;
 
@@ -678,9 +507,9 @@ async function createComplaint(req, res) {
       }
     }
 
-    // ===============================================
+    // ======================================
     // STUDENT NOTIFICATION
-    // ===============================================
+    // ======================================
 
     await notify({
       receiver: creatorId,
@@ -690,24 +519,22 @@ async function createComplaint(req, res) {
 
       message:
         `${complaint.complaintId} submitted. ` +
-        "The Manager will choose a visit slot.",
+        "Your preferred visit time has been recorded.",
 
       type: "COMPLAINT",
 
       priority: notificationPriority(complaint.priority),
 
       relatedComplaint: complaint._id,
-
       relatedId: complaint._id,
-
       relatedModel: "Complaint",
 
       actionUrl: "/complaints",
     });
 
-    // ===============================================
+    // ======================================
     // MAINTENANCE MANAGER NOTIFICATION
-    // ===============================================
+    // ======================================
 
     try {
       const managers = await User.find({
@@ -726,10 +553,9 @@ async function createComplaint(req, res) {
 
             `${student.name || "Student"} submitted ` +
               `${complaint.complaintId} (${title}). ` +
-              "Select a preferred visit slot.",
+              "Review the student's preferred visit window.",
 
             "COMPLAINT",
-
             "/maintenance/dashboard",
           ),
         ),
@@ -753,9 +579,9 @@ async function createComplaint(req, res) {
   }
 }
 
-// =====================================================
+// ==========================================
 // GET ALL COMPLAINTS
-// =====================================================
+// ==========================================
 
 async function getAllComplaints(req, res) {
   try {
@@ -780,9 +606,9 @@ async function getAllComplaints(req, res) {
   }
 }
 
-// =====================================================
+// ==========================================
 // GET MY COMPLAINTS
-// =====================================================
+// ==========================================
 
 async function getMyComplaints(req, res) {
   try {
@@ -808,9 +634,9 @@ async function getMyComplaints(req, res) {
   }
 }
 
-// =====================================================
+// ==========================================
 // GET COMPLAINT BY ID
-// =====================================================
+// ==========================================
 
 async function getComplaintById(req, res) {
   try {
@@ -825,7 +651,6 @@ async function getComplaintById(req, res) {
       });
     }
 
-    // Students can only see their own complaints
     if (
       upper(req.user?.role) === "STUDENT" &&
       text(complaint.student?._id || complaint.student) !== text(userId(req))
@@ -850,9 +675,9 @@ async function getComplaintById(req, res) {
   }
 }
 
-// =====================================================
+// ==========================================
 // UPDATE COMPLAINT STATUS
-// =====================================================
+// ==========================================
 
 async function updateComplaintStatus(req, res) {
   try {
@@ -890,9 +715,9 @@ async function updateComplaintStatus(req, res) {
       });
     }
 
-    // ===============================================
+    // ======================================
     // CLOSE COMPLAINT
-    // ===============================================
+    // ======================================
 
     if (next === "CLOSED" && old !== "CLOSED") {
       complaint.closedAt = new Date();
@@ -911,10 +736,6 @@ async function updateComplaintStatus(req, res) {
     }
 
     await complaint.save();
-
-    // ===============================================
-    // STUDENT NOTIFICATION
-    // ===============================================
 
     if (next !== old && complaint.createdBy) {
       await notice(
@@ -945,11 +766,9 @@ async function updateComplaintStatus(req, res) {
   }
 }
 
-// =====================================================
+// ==========================================
 // ASSIGN COMPLAINT
-// Legacy route — Manager main assignment logic
-// remains in workerController.
-// =====================================================
+// ==========================================
 
 async function assignComplaint(req, res) {
   try {
@@ -969,9 +788,9 @@ async function assignComplaint(req, res) {
       });
     }
 
-    // ===============================================
+    // ======================================
     // FIND TECHNICIAN
-    // ===============================================
+    // ======================================
 
     const worker = await User.findById(req.body?.assignedTo);
 
@@ -992,9 +811,9 @@ async function assignComplaint(req, res) {
       });
     }
 
-    // ===============================================
+    // ======================================
     // CATEGORY MATCHING
-    // ===============================================
+    // ======================================
 
     if (normalize(worker.department) !== normalize(complaint.category)) {
       return res.status(400).json({
@@ -1003,9 +822,9 @@ async function assignComplaint(req, res) {
       });
     }
 
-    // ===============================================
-    // MAX 10 ACTIVE JOBS
-    // ===============================================
+    // ======================================
+    // MAXIMUM 10 ACTIVE JOBS
+    // ======================================
 
     if ((worker.currentJobs || 0) >= 10) {
       return res.status(400).json({
@@ -1014,16 +833,13 @@ async function assignComplaint(req, res) {
       });
     }
 
-    // ===============================================
+    // ======================================
     // ASSIGN TECHNICIAN
-    // ===============================================
+    // ======================================
 
     complaint.assignedTo = worker._id;
-
     complaint.assignedBy = userId(req);
-
     complaint.workerAssigned = true;
-
     complaint.status = "ASSIGNED";
 
     complaint.statusHistory.push({
@@ -1039,9 +855,9 @@ async function assignComplaint(req, res) {
     await worker.save();
     await complaint.save();
 
-    // ===============================================
-    // STUDENT + TECHNICIAN NOTIFICATIONS
-    // ===============================================
+    // ======================================
+    // NOTIFICATIONS
+    // ======================================
 
     await Promise.allSettled([
       notice(
@@ -1054,7 +870,6 @@ async function assignComplaint(req, res) {
         `${complaint.complaintId} has been assigned to you.`,
 
         "WORKER_ASSIGN",
-
         "/technician/dashboard",
       ),
 
@@ -1086,9 +901,9 @@ async function assignComplaint(req, res) {
   }
 }
 
-// =====================================================
+// ==========================================
 // REOPEN COMPLAINT
-// =====================================================
+// ==========================================
 
 async function reopenComplaint(req, res) {
   try {
@@ -1101,9 +916,9 @@ async function reopenComplaint(req, res) {
       });
     }
 
-    // ===============================================
-    // STUDENT OWNERSHIP CHECK
-    // ===============================================
+    // ======================================
+    // STUDENT OWNERSHIP
+    // ======================================
 
     if (
       upper(req.user?.role) === "STUDENT" &&
@@ -1124,9 +939,9 @@ async function reopenComplaint(req, res) {
       });
     }
 
-    // ===============================================
+    // ======================================
     // SAVE REOPEN DETAILS
-    // ===============================================
+    // ======================================
 
     complaint.status = "REOPENED";
 
@@ -1142,9 +957,9 @@ async function reopenComplaint(req, res) {
 
     await complaint.save();
 
-    // ===============================================
+    // ======================================
     // NOTIFY RELEVANT USERS
-    // ===============================================
+    // ======================================
 
     const managers = await User.find({
       role: "MAINTENANCE_MANAGER",
@@ -1198,9 +1013,9 @@ async function reopenComplaint(req, res) {
   }
 }
 
-// =====================================================
-// GET ADMIN-CREATED MAINTENANCE CATEGORIES
-// =====================================================
+// ==========================================
+// GET ADMIN MAINTENANCE CATEGORIES
+// ==========================================
 
 async function getCategoriesForStudents(req, res) {
   try {
@@ -1235,9 +1050,9 @@ async function getCategoriesForStudents(req, res) {
   }
 }
 
-// =====================================================
+// ==========================================
 // EXPORT ALL EXISTING ROUTE HANDLERS
-// =====================================================
+// ==========================================
 
 module.exports = {
   createComplaint,

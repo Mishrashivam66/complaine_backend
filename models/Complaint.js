@@ -2,135 +2,132 @@
 
 const mongoose = require("mongoose");
 
-// =====================================================
-// AMI MAINTENANCE
-// COMPLAINT MODEL
-// =====================================================
+// =============================================
+// AMI MAINTENANCE — COMPLAINT MODEL
+// =============================================
+
+const toMinutes = (value) => {
+  if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value)) {
+    return null;
+  }
+
+  const [hours, minutes] = value.split(":").map(Number);
+  return hours * 60 + minutes;
+};
+
+const preferredVisitTimeSchema = new mongoose.Schema(
+  {
+    startTime: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+    endTime: {
+      type: String,
+      default: "",
+      trim: true,
+    },
+  },
+  { _id: false },
+);
+
+preferredVisitTimeSchema.pre("validate", function (next) {
+  const { startTime, endTime } = this;
+
+  // Legacy complaints may not contain preferred timing.
+  if (!startTime && !endTime) return next();
+
+  const start = toMinutes(startTime);
+  const end = toMinutes(endTime);
+
+  if (
+    start === null ||
+    end === null ||
+    start < 600 ||
+    start > 900 ||
+    end > 1020 ||
+    end - start < 120
+  ) {
+    return next(
+      new Error(
+        "Preferred visit time must be between 10:00 AM and 5:00 PM with a minimum 2-hour duration.",
+      ),
+    );
+  }
+
+  next();
+});
 
 const complaintSchema = new mongoose.Schema(
   {
-    // =================================================
     // COMPLAINT ID
-    // =================================================
-
     complaintId: {
       type: String,
       unique: true,
     },
 
-    // =================================================
-    // BASIC COMPLAINT DETAILS
-    // =================================================
-
+    // BASIC DETAILS
     title: {
       type: String,
       required: true,
       trim: true,
     },
-
     description: {
       type: String,
       required: true,
     },
 
-    // =================================================
-    // HINDI AUTO TRANSLATION
-    // =================================================
-
+    // HINDI TRANSLATION
     titleHindi: {
       type: String,
       default: "",
     },
-
     descriptionHindi: {
       type: String,
       default: "",
     },
 
-    // =================================================
     // COMPLAINT AREA
-    //
-    // HOSTEL     - Hostel maintenance
-    // DEPARTMENT - Academic blocks
-    // CAMPUS     - Other campus locations
-    // =================================================
-
     complaintArea: {
       type: String,
       enum: ["HOSTEL", "DEPARTMENT", "CAMPUS"],
       default: "HOSTEL",
     },
 
-    // =================================================
-    // COMPLAINT DEADLINE
-    // =================================================
-
     deadline: {
       type: Date,
     },
-
-    // =================================================
-    // FLOOR DETAILS
-    // =================================================
 
     floor: {
       type: String,
       default: "",
     },
 
-    // =================================================
-    // WORKER ASSIGNMENT FLAG
-    // =================================================
-
     workerAssigned: {
       type: Boolean,
       default: false,
     },
 
-    // =================================================
-    // MAINTENANCE CATEGORY
-    // =================================================
-
+    // CATEGORY
     category: {
       type: String,
       required: true,
     },
-
-    // =================================================
-    // SUBCATEGORY
-    // =================================================
-
     subCategory: {
       type: String,
       default: "",
     },
 
-    // =================================================
     // PRIORITY
-    // =================================================
-
     priority: {
       type: String,
       enum: ["LOW", "MEDIUM", "HIGH", "URGENT"],
       default: "MEDIUM",
     },
 
-    // =================================================
     // COMPLAINT STATUS
-    //
-    // PENDING          - Newly submitted
-    // ASSIGNED         - Technician assigned
-    // IN_PROGRESS      - Work started
-    // WAITING_MATERIAL - Material pending
-    // COMPLETED        - Technician finished work
-    // RESOLVED         - Student accepted repair
-    // CLOSED           - Final closure
-    // REOPENED         - Further work required
-    // =================================================
-
     status: {
       type: String,
-
       enum: [
         "PENDING",
         "ASSIGNED",
@@ -141,170 +138,115 @@ const complaintSchema = new mongoose.Schema(
         "CLOSED",
         "REOPENED",
       ],
-
       default: "PENDING",
     },
 
-    // =================================================
-    // ESCALATION DETAILS
-    // =================================================
-
+    // ESCALATION
     isEscalated: {
       type: Boolean,
       default: false,
     },
-
     escalationReason: {
       type: String,
       default: "",
     },
-
     escalatedAt: {
       type: Date,
       default: null,
     },
 
-    // =================================================
-    // WORK START / COMPLETION / RESOLUTION
-    // =================================================
-
+    // WORK TIMESTAMPS
     startedAt: {
       type: Date,
       default: null,
     },
-
     completedAt: {
       type: Date,
       default: null,
     },
-
     resolvedAt: {
       type: Date,
       default: null,
     },
 
-    // =================================================
     // MAINTENANCE MANAGER
-    // =================================================
-
     assignedBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
     },
-
     assignedDepartment: {
       type: String,
       default: "",
     },
 
-    // =================================================
-    // WORKER REMARKS
-    // =================================================
-
+    // TECHNICIAN REMARKS
     workerRemarks: {
       type: String,
       default: "",
     },
 
-    // =================================================
     // MATERIAL MANAGEMENT
-    // =================================================
-
     materialRequired: {
       type: Boolean,
       default: false,
     },
-
     materialDecision: {
       type: String,
-
       enum: ["PENDING", "REQUIRED", "NOT_REQUIRED"],
-
       default: "PENDING",
     },
 
-    // =================================================
-    // STUDENT / COMPLAINT CREATOR
-    // =================================================
-
+    // COMPLAINT CREATOR
     createdBy: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
-
     student: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       required: true,
     },
 
-    // =================================================
-    // ASSIGNED TECHNICIAN / WORKER
-    // =================================================
-
+    // ASSIGNED TECHNICIAN
     assignedTo: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
       default: null,
     },
 
-    // =================================================
-    // HOSTEL / ACADEMIC BLOCK DETAILS
-    // =================================================
-
+    // LOCATION
     hostel: {
       type: String,
       default: "",
     },
-
     block: {
       type: String,
       default: "",
     },
-
     roomNumber: {
       type: String,
       default: "",
     },
-
-    // =================================================
-    // ISSUE LOCATION
-    // =================================================
-
     issueLocation: {
       type: String,
       default: "",
     },
 
-    // =================================================
-    // LEGACY AVAILABLE TIME
-    //
-    // Kept for compatibility with existing pages.
-    // =================================================
-
+    // LEGACY AVAILABILITY
     availableFrom: {
       type: String,
       default: "",
     },
-
     availableTo: {
       type: String,
       default: "",
     },
 
-    // =================================================
-    // STUDENT PREFERRED VISIT SLOTS
-    //
-    // Student selects exactly 3 preferred 2-hour slots.
-    //
-    // Example:
-    // 09:00 AM - 11:00 AM
-    // 11:00 AM - 01:00 PM
-    // 01:00 PM - 03:00 PM
-    // =================================================
-
+    // LEGACY THREE-SLOT SYSTEM
+    // Retained for existing complaint compatibility.
+    // New complaints will use preferredVisitTime.
     preferredVisitSlots: [
       {
         preference: {
@@ -312,17 +254,14 @@ const complaintSchema = new mongoose.Schema(
           min: 1,
           max: 3,
         },
-
         date: {
           type: String,
           default: "",
         },
-
         startTime: {
           type: String,
           default: "",
         },
-
         endTime: {
           type: String,
           default: "",
@@ -330,104 +269,71 @@ const complaintSchema = new mongoose.Schema(
       },
     ],
 
-    // =================================================
-    // MAINTENANCE MANAGER CONFIRMED VISIT
-    //
-    // Manager selects a visit time.
-    // =================================================
+    // =========================================
+    // NEW — SINGLE PREFERRED VISIT WINDOW
+    // Working hours: 10 AM to 5 PM
+    // Minimum duration: 2 hours
+    // Example: 11:00 to 13:00
+    // =========================================
+    preferredVisitTime: {
+      type: preferredVisitTimeSchema,
+      default: undefined,
+    },
 
+    // MANAGER CONFIRMED VISIT
     scheduledVisit: {
       date: {
         type: String,
         default: "",
       },
-
       startTime: {
         type: String,
         default: "",
       },
-
       endTime: {
         type: String,
         default: "",
       },
-
       scheduledBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
         default: null,
       },
-
       scheduledAt: {
         type: Date,
         default: null,
       },
     },
 
-    // =================================================
-    // COMPLAINT IMAGE
-    // =================================================
-
+    // IMAGE
     image: {
       type: String,
       default: "",
     },
 
-    // =================================================
     // GENERAL REMARKS
-    // =================================================
-
     remarks: {
       type: String,
       default: "",
     },
 
-    // =================================================
     // STUDENT SATISFACTION VERIFICATION
-    //
-    // NEW FEATURE
-    //
-    // SATISFIED:
-    // Student accepts the repair.
-    // Controller moves status to RESOLVED.
-    //
-    // NOT_SATISFIED:
-    // Student provides a reason.
-    // Controller moves status to REOPENED.
-    //
-    // Only the complaint owner can verify.
-    // =================================================
-
     studentVerification: {
-      // Student decision
-
       decision: {
         type: String,
-
         enum: ["SATISFIED", "NOT_SATISFIED"],
-
         default: undefined,
       },
-
-      // Reason required for NOT_SATISFIED.
-      // Validation is enforced in the controller.
-
       reason: {
         type: String,
         trim: true,
         default: "",
         maxlength: 800,
       },
-
-      // Date and time when Student verified
-
       verifiedAt: {
         type: Date,
         default: null,
       },
-
-      // Student who submitted verification
-
       verifiedBy: {
         type: mongoose.Schema.Types.ObjectId,
         ref: "User",
@@ -435,48 +341,32 @@ const complaintSchema = new mongoose.Schema(
       },
     },
 
-    // =================================================
     // REOPEN MANAGEMENT
-    //
-    // Preserve existing reopen functionality.
-    // =================================================
-
     reopenCount: {
       type: Number,
       default: 0,
     },
-
     reopenReason: {
       type: String,
       default: "",
     },
 
-    // =================================================
-    // CLOSED TIME
-    // =================================================
-
+    // CLOSURE
     closedAt: {
       type: Date,
       default: null,
     },
 
-    // =================================================
-    // COMPLAINT STATUS HISTORY
-    //
-    // Records all complaint status changes.
-    // =================================================
-
+    // STATUS HISTORY
     statusHistory: [
       {
         status: {
           type: String,
         },
-
         changedAt: {
           type: Date,
           default: Date.now,
         },
-
         changedBy: {
           type: mongoose.Schema.Types.ObjectId,
           ref: "User",
@@ -484,18 +374,9 @@ const complaintSchema = new mongoose.Schema(
       },
     ],
   },
-
-  // ===================================================
-  // SCHEMA OPTIONS
-  // ===================================================
-
   {
     timestamps: true,
   },
 );
-
-// =====================================================
-// EXPORT COMPLAINT MODEL
-// =====================================================
 
 module.exports = mongoose.model("Complaint", complaintSchema);
