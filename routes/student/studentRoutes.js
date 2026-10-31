@@ -43,7 +43,7 @@ const { protect, authorizeRoles } = require("../../middleware/authMiddleware");
 router.get("/", (req, res) => {
   return res.json({
     success: true,
-    message: "AMI MAINTENANCE - Student Routes Working",
+    message: "AMI MAINT. - Student Routes Working",
   });
 });
 

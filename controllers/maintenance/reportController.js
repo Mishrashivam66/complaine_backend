@@ -7,7 +7,7 @@ const ExcelJS = require("exceljs");
 const { Parser } = require("json2csv");
 
 // =======================================================
-// AMI MAINTENANCE — PROFESSIONAL REPORT EXPORTS
+// AMI MAINT. — PROFESSIONAL REPORT EXPORTS
 // Single-sheet Excel + Compact PDF + CSV + Analytics
 // =======================================================
 
@@ -406,7 +406,7 @@ exports.exportExcelReport = async (req, res) => {
     const rows = reportRows(data.complaints);
 
     const workbook = new ExcelJS.Workbook();
-    workbook.creator = "AMI MAINTENANCE";
+    workbook.creator = "AMI MAINT.";
     workbook.title = "Maintenance Operations Report";
 
     // ONE sheet instead of scattered tabs.
@@ -444,7 +444,7 @@ exports.exportExcelReport = async (req, res) => {
 
     ws.mergeCells(1, 1, 2, width);
     const title = ws.getCell(1, 1);
-    title.value = "AMI MAINTENANCE | MAINTENANCE OPERATIONS REPORT";
+    title.value = "AMI MAINT. | MAINTENANCE OPERATIONS REPORT";
     title.font = {
       name: "Calibri",
       size: 21,
@@ -662,7 +662,7 @@ exports.exportExcelReport = async (req, res) => {
 // =======================================================
 
 /* ==========================================================
-   AMI MAINTENANCE — COMPLETE DETAILED PDF REPORT
+   AMI MAINT. — COMPLETE DETAILED PDF REPORT
    Uses SAME reportRows() data as Excel
    Full fields | Safe pagination | No intentional blank pages
    ========================================================== */
@@ -743,7 +743,7 @@ exports.exportPDFReport = async (req, res) => {
       doc.rect(0, 0, PW, 62).fill(NAVY);
       doc.rect(0, 62, PW, 3).fill(GOLD);
 
-      drawLine("AMI MAINTENANCE", LEFT, 11, 350, {
+      drawLine("AMI MAINT.", LEFT, 11, 350, {
         size: 10,
         bold: true,
         color: GOLD,
@@ -1108,7 +1108,7 @@ exports.exportPDFReport = async (req, res) => {
         .stroke();
 
       drawLine(
-        "AMI MAINTENANCE | CONFIDENTIAL MAINTENANCE REPORT",
+        "AMI MAINT. | CONFIDENTIAL MAINTENANCE REPORT",
         LEFT,
         fy + 8,
         470,

@@ -3,7 +3,7 @@
 const User = require("../../models/User");
 
 // =====================================================
-// AMI MAINTENANCE
+// AMI MAINT.
 // GET ALL WARDENS OF LOGGED-IN STUDENT'S HOSTEL
 // =====================================================
 

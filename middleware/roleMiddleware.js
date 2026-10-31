@@ -1,7 +1,7 @@
 "use strict";
 
 // ==========================================
-// AMI MAINTENANCE - ROLE AUTHORIZATION
+// AMI MAINT. - ROLE AUTHORIZATION
 // ==========================================
 
 const roleMiddleware = (...roles) => {

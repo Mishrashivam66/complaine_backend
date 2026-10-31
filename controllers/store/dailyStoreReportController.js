@@ -552,7 +552,7 @@ const titles = {
 async function writeExcel(res, report) {
   const workbook = new ExcelJS.Workbook();
 
-  workbook.creator = "AMI MAINTENANCE";
+  workbook.creator = "AMI MAINT.";
   workbook.lastModifiedBy = "University Store Department";
   workbook.created = new Date();
   workbook.modified = new Date();
@@ -759,7 +759,7 @@ async function writeExcel(res, report) {
     ws.pageSetup.printTitlesRow = "1:7";
 
     ws.headerFooter.oddFooter =
-      "AMI MAINTENANCE  |  UNIVERSITY STORE  |  Page &P of &N";
+      "AMI MAINT.  |  UNIVERSITY STORE  |  Page &P of &N";
 
     ws.properties.tabColor = {
       argb: C.navy,
@@ -793,7 +793,7 @@ async function writeExcel(res, report) {
       ws.getColumn(i).width = 21;
     }
 
-    mergeBand(ws, 1, 8, "AMI MAINTENANCE", {
+    mergeBand(ws, 1, 8, "AMI MAINT.", {
       size: 23,
       color: C.white,
       background: C.dark,
@@ -1042,7 +1042,7 @@ async function writeExcel(res, report) {
     ws.pageSetup.printArea = `A1:H${noteRow}`;
 
     ws.headerFooter.oddFooter =
-      "AMI MAINTENANCE  |  DAILY SUMMARY  |  Page &P of &N";
+      "AMI MAINT.  |  DAILY SUMMARY  |  Page &P of &N";
   }
 
   // ==========================================
@@ -1078,7 +1078,7 @@ async function writeExcel(res, report) {
     // UNIVERSITY HEADER
     // ========================================
 
-    mergeBand(ws, 1, columnCount, "AMI MAINTENANCE", {
+    mergeBand(ws, 1, columnCount, "AMI MAINT.", {
       size: 22,
       color: C.white,
       background: C.dark,
@@ -1586,7 +1586,7 @@ function writePDF(res, report) {
     .font("Helvetica-Bold")
     .fontSize(20)
     .fillColor("#001B54")
-    .text("AMI MAINTENANCE", LEFT, 45, {
+    .text("AMI MAINT.", LEFT, 45, {
       width: WIDTH,
       align: "center",
       lineBreak: false,
@@ -1857,7 +1857,7 @@ function writePDF(res, report) {
       .fontSize(8)
       .fillColor("#64748B")
       .text(
-        `AMI MAINTENANCE | ${report.date} | Page ${page + 1} of ${range.count}`,
+        `AMI MAINT. | ${report.date} | Page ${page + 1} of ${range.count}`,
         LEFT,
         y,
         {

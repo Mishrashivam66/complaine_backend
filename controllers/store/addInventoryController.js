@@ -1,7 +1,7 @@
 "use strict";
 
 // ==========================================
-// AMI MAINTENANCE
+// AMI MAINT.
 // LEGACY INVENTORY CONTROLLER COMPATIBILITY
 // ==========================================
 //

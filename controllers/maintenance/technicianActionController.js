@@ -6,7 +6,7 @@ const User = require("../../models/User");
 const sendNotification = require("../../utils/sendNotification");
 
 // ======================================================
-// AMI MAINTENANCE — TECHNICIAN ACTIONS
+// AMI MAINT. — TECHNICIAN ACTIONS
 // Work Done | Reopened Complaint Rework
 // ======================================================
 

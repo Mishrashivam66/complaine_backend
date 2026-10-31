@@ -3,7 +3,7 @@
 const mongoose = require("mongoose");
 
 // =============================================
-// AMI MAINTENANCE — COMPLAINT MODEL
+// AMI MAINT. — COMPLAINT MODEL
 // =============================================
 
 const toMinutes = (value) => {
