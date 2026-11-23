@@ -1,3 +1,5 @@
+"use strict";
+
 const mongoose = require("mongoose");
 const crypto = require("crypto");
 const XLSX = require("xlsx");
@@ -5,6 +7,11 @@ const XLSX = require("xlsx");
 const Inventory = require("../../models/Inventory");
 const StockInward = require("../../models/StockInward");
 const StockTransaction = require("../../models/StockTransaction");
+
+// Excel import does not assign a category.
+// The Store Manager assigns categories later.
+const UNASSIGNED_CATEGORY = "Uncategorized";
+const MAX_ROWS = 1000;
 
 // ==========================================
 // HELPERS
@@ -17,27 +24,35 @@ const normalize = (value) =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 
-const qty = (value) => {
-  if (value === "" || value === null || value === undefined) {
-    return NaN;
-  }
-
-  const number = Number(value);
-
-  return Number.isFinite(number) &&
-    number > 0 &&
-    Math.round(number * 1000) / 1000 === number
-    ? number
-    : NaN;
-};
-
 const round = (value) =>
   Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
 
-function bad(message, status = 400) {
+function bad(message, statusCode = 400) {
   const error = new Error(message);
-  error.statusCode = status;
+  error.statusCode = statusCode;
   throw error;
+}
+
+// Manual inward needs a positive quantity.
+// Excel can register zero-stock material masters.
+function parseQuantity(value, allowZero = false) {
+  if (value === null || value === undefined || clean(value) === "") {
+    return allowZero ? 0 : NaN;
+  }
+
+  const text = clean(value).replace(/,/g, "");
+  const amount = Number(text);
+
+  if (
+    !Number.isFinite(amount) ||
+    amount < 0 ||
+    (!allowZero && amount === 0) ||
+    Math.abs(amount * 1000 - Math.round(amount * 1000)) > 1e-7
+  ) {
+    return NaN;
+  }
+
+  return round(amount);
 }
 
 function stockStatus(stock, minimum) {
@@ -67,7 +82,7 @@ function dateValue(value) {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function getMetadata(body) {
+function getMetadata(body = {}) {
   const billNo = clean(body.billNo);
   const grnNo = clean(body.grnNo);
   const vendorName = clean(body.vendorName);
@@ -86,41 +101,50 @@ function getMetadata(body) {
   };
 }
 
-function validateRows(rows) {
-  if (!Array.isArray(rows) || !rows.length) {
+// ==========================================
+// VALIDATE ROWS
+// ==========================================
+
+function validateRows(
+  rows,
+  { allowZero = false, requireCategory = false } = {},
+) {
+  if (!Array.isArray(rows) || rows.length === 0) {
     bad("At least one inventory item is required");
   }
 
-  if (rows.length > 1000) {
-    bad("Maximum 1000 items allowed per import");
+  if (rows.length > MAX_ROWS) {
+    bad(`Maximum ${MAX_ROWS} items allowed per import`);
   }
 
-  const seen = new Set();
+  const codes = new Set();
 
   return rows.map((row, index) => {
     const itemCode = clean(row.itemCode).toUpperCase();
-    const itemName = clean(row.itemName);
-    const category = clean(row.category);
-    const unit = clean(row.unit);
-    const quantity = qty(row.quantity);
 
-    if (
-      !itemCode ||
-      !itemName ||
-      !category ||
-      !unit ||
-      !Number.isFinite(quantity)
-    ) {
+    const itemName = clean(row.itemName);
+    const unit = clean(row.unit);
+    const category = clean(row.category);
+
+    const quantity = parseQuantity(row.quantity, allowZero);
+
+    if (!itemCode || !itemName || !unit || !Number.isFinite(quantity)) {
       bad(
-        `Row ${index + 1}: Item Code, Description, Category, UOM and positive Quantity are required`,
+        `Row ${index + 1}: Item Code, Description, UOM and ${
+          allowZero ? "non-negative" : "positive"
+        } Quantity are required`,
       );
     }
 
-    if (seen.has(itemCode)) {
+    if (requireCategory && !category) {
+      bad(`Row ${index + 1}: Category is required for manual inward`);
+    }
+
+    if (codes.has(itemCode)) {
       bad(`Duplicate Item Code in upload: ${itemCode}`);
     }
 
-    seen.add(itemCode);
+    codes.add(itemCode);
 
     return {
       itemCode,
@@ -133,33 +157,21 @@ function validateRows(rows) {
 }
 
 // ==========================================
-// EXCEL PARSING
+// READ UNIVERSITY EXCEL
+// ==========================================
+// Required headers:
+// Item Code
+// Item Description
+// UOM
+// Selected quantity column
+//
+// Optional header:
+// Category Name
+//
+// New Excel items remain Uncategorized,
+// even when Excel includes a category.
 // ==========================================
 
-function cellText(cell) {
-  if (!cell) return "";
-
-  const value = cell.value;
-
-  if (value === null || value === undefined) return "";
-
-  if (typeof value === "object" && value.result !== undefined) {
-    return clean(value.result);
-  }
-
-  if (typeof value === "object" && value.text !== undefined) {
-    return clean(value.text);
-  }
-
-  return clean(cell.text ?? value);
-}
-
-/**
- * Read university inventory Excel (.xlsx).
- *
- * Supports title rows before the column headers.
- * The selected quantity column is ADDITIVE stock.
- */
 async function readExcel(buffer, quantityColumn) {
   let workbook;
 
@@ -172,13 +184,7 @@ async function readExcel(buffer, quantityColumn) {
   } catch (error) {
     console.error("EXCEL READ ERROR:", error);
 
-    const parseError = new Error(
-      "Unable to read the Excel file. Please upload a valid .xlsx workbook.",
-      { cause: error },
-    );
-
-    parseError.statusCode = 400;
-    throw parseError;
+    bad("Unable to read the Excel file. Upload a valid .xlsx workbook.");
   }
 
   if (!workbook.SheetNames?.length) {
@@ -229,13 +235,12 @@ async function readExcel(buffer, quantityColumn) {
   let headerIndex = -1;
   let columns = null;
 
-  // Find the header row within the first 20 rows.
-  for (let rowIndex = 0; rowIndex < Math.min(data.length, 20); rowIndex++) {
-    const row = data[rowIndex] || [];
+  // Find Excel header row within first 20 rows.
+  for (let index = 0; index < Math.min(data.length, 20); index++) {
     const headings = {};
 
-    row.forEach((value, columnIndex) => {
-      const name = normalize(value);
+    (data[index] || []).forEach((cell, columnIndex) => {
+      const name = normalize(cell);
 
       if (name) {
         headings[name] = columnIndex;
@@ -245,72 +250,77 @@ async function readExcel(buffer, quantityColumn) {
     const selected = {};
 
     for (const [key, names] of Object.entries(aliases)) {
-      const match = names.find((name) => headings[name] !== undefined);
+      const matched = names.find((alias) => headings[alias] !== undefined);
 
-      selected[key] = match === undefined ? undefined : headings[match];
+      selected[key] = matched === undefined ? undefined : headings[matched];
     }
 
     selected.quantity = headings[selectedQuantityColumn];
 
-    if (
-      Object.values(selected).every((columnIndex) => columnIndex !== undefined)
-    ) {
-      headerIndex = rowIndex;
+    // Category column is OPTIONAL.
+    const validHeaders = ["itemCode", "itemName", "unit", "quantity"].every(
+      (key) => selected[key] !== undefined,
+    );
+
+    if (validHeaders) {
+      headerIndex = index;
       columns = selected;
       break;
     }
   }
 
-  if (headerIndex === -1) {
+  if (!columns) {
     bad(
-      `Required Excel columns were not found. Check Item Code, Item Description, UOM, Category Name and "${quantityColumn}".`,
+      `Required Excel headers: Item Code, Item Description, UOM and "${quantityColumn}". Category Name is optional.`,
     );
   }
 
   const rows = [];
 
-  for (let rowIndex = headerIndex + 1; rowIndex < data.length; rowIndex++) {
-    const row = data[rowIndex] || [];
+  for (let index = headerIndex + 1; index < data.length; index++) {
+    const values = data[index] || [];
 
-    const itemCode = clean(row[columns.itemCode]).toUpperCase();
+    const itemCode = clean(values[columns.itemCode]).toUpperCase();
 
-    const itemName = clean(row[columns.itemName]);
+    const itemName = clean(values[columns.itemName]);
 
     if (!itemCode && !itemName) {
       continue;
     }
 
-    const category = clean(row[columns.category]);
-    const unit = clean(row[columns.unit]);
+    const unit = clean(values[columns.unit]);
 
-    const rawQuantity = clean(row[columns.quantity]);
+    const category =
+      columns.category === undefined ? "" : clean(values[columns.category]);
 
-    // Zero or empty quantity does not add stock.
-    if (rawQuantity === "" || Number(rawQuantity) === 0) {
-      continue;
+    const rawQuantity = clean(values[columns.quantity]);
+
+    const quantity = parseQuantity(rawQuantity, true);
+
+    if (!itemCode || !itemName || !unit) {
+      bad(
+        `Excel row ${index + 1}: Item Code, Description and UOM are required.`,
+      );
     }
 
-    const parsedQuantity = Number(rawQuantity.replace(/,/g, ""));
-
-    if (!itemCode || !itemName || !category || !unit) {
-      bad(`Excel row ${rowIndex + 1}: Required item fields are missing.`);
-    }
-
-    if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0) {
-      bad(`Excel row ${rowIndex + 1}: Invalid stock quantity.`);
+    if (!Number.isFinite(quantity)) {
+      bad(
+        `Excel row ${index + 1}: Quantity must be 0 or more, with up to 3 decimals.`,
+      );
     }
 
     rows.push({
       itemCode,
       itemName,
-      category,
       unit,
-      quantity: parsedQuantity,
+      category,
+      quantity,
     });
   }
 
-  // Reuse existing duplicate and quantity validation.
-  return validateRows(rows);
+  return validateRows(rows, {
+    allowZero: true,
+  });
 }
 
 // ==========================================
@@ -322,11 +332,16 @@ async function processInward({
   metadata,
   source,
   importKey,
-  fileName,
-  quantityColumn,
+  fileName = "",
+  quantityColumn = "Quantity",
   userId,
 }) {
-  const validRows = validateRows(rows);
+  const excel = source === "EXCEL";
+
+  const validRows = validateRows(rows, {
+    allowZero: excel,
+    requireCategory: !excel,
+  });
 
   const session = await mongoose.startSession();
 
@@ -334,6 +349,10 @@ async function processInward({
     let responseData;
 
     await session.withTransaction(async () => {
+      // ==================================
+      // DUPLICATE IMPORT PROTECTION
+      // ==================================
+
       const duplicate = await StockInward.findOne({
         importKey,
       }).session(session);
@@ -347,25 +366,40 @@ async function processInward({
 
       const inwardNo = makeInwardNo();
 
+      // ==================================
+      // CREATE STOCK INWARD RECORD
+      // ==================================
+
       const [inward] = await StockInward.create(
         [
           {
             inwardNo,
             importKey,
             source,
+
             ...metadata,
-            fileName: fileName || "",
-            quantityColumn: quantityColumn || "Quantity",
+
+            fileName,
+            quantityColumn,
+
             items: [],
             totalItems: 0,
             totalQuantity: 0,
+
             createdBy: userId,
           },
         ],
-        { session },
+        {
+          session,
+        },
       );
 
       const completed = [];
+      const receiptItems = [];
+
+      // ==================================
+      // PROCESS EACH IMPORTED MATERIAL
+      // ==================================
 
       for (const row of validRows) {
         let inventory = await Inventory.findOne({
@@ -374,13 +408,18 @@ async function processInward({
 
         let isNewItem = false;
 
-        // Older inventory records may not
-        // have university Item Codes yet.
+        // ==================================
+        // LEGACY MATCH BY ITEM NAME
+        // ==================================
+
         if (!inventory) {
           const nameMatches = await Inventory.find({
             itemName: row.itemName,
           })
-            .collation({ locale: "en", strength: 2 })
+            .collation({
+              locale: "en",
+              strength: 2,
+            })
             .session(session);
 
           if (nameMatches.length > 1) {
@@ -390,9 +429,8 @@ async function processInward({
           inventory = nameMatches[0] || null;
 
           if (
-            inventory &&
-            inventory.itemCode &&
-            inventory.itemCode !== row.itemCode
+            inventory?.itemCode &&
+            inventory.itemCode.toUpperCase() !== row.itemCode
           ) {
             bad(
               `Item ${row.itemName} already has different Item Code ${inventory.itemCode}`,
@@ -404,119 +442,253 @@ async function processInward({
         let before = 0;
         let after = 0;
 
+        // ==================================
+        // NEW INVENTORY MATERIAL
+        // ==================================
+
         if (!inventory) {
           isNewItem = true;
+
+          // Excel import creates an
+          // unassigned master item.
+          const initialCategory = excel
+            ? UNASSIGNED_CATEGORY
+            : row.category || UNASSIGNED_CATEGORY;
 
           const [created] = await Inventory.create(
             [
               {
                 itemCode: row.itemCode,
                 itemName: row.itemName,
+
                 itemDescription: row.itemName,
-                category: row.category,
+
+                category: initialCategory,
+
+                otherCategory: "",
+
                 unit: row.unit,
+
                 currentStock: row.quantity,
+
                 openingQuantity: 0,
+
                 incomingQuantity: row.quantity,
+
                 outgoingQuantity: 0,
+
                 minimumStock: 5,
+
+                status: stockStatus(row.quantity, 5),
               },
             ],
-            { session },
+            {
+              session,
+            },
           );
 
           inventory = created;
           after = row.quantity;
         } else {
+          // ==================================
+          // EXISTING INVENTORY MATERIAL
+          // ==================================
+
           if (inventory.isActive === false) {
             bad(`Item ${row.itemCode} is inactive`, 409);
           }
 
           before = Number(inventory.currentStock || 0);
 
-          const update = {
-            $inc: {
-              currentStock: row.quantity,
-              incomingQuantity: row.quantity,
-            },
-          };
+          after = before;
 
-          if (!inventory.itemCode) {
-            update.$set = {
-              itemCode: row.itemCode,
+          // Add only positive quantities.
+          // Never overwrite stock balances.
+          if (row.quantity > 0) {
+            const update = {
+              $inc: {
+                currentStock: row.quantity,
+
+                incomingQuantity: row.quantity,
+              },
             };
+
+            if (!inventory.itemCode) {
+              update.$set = {
+                itemCode: row.itemCode,
+              };
+            }
+
+            inventory = await Inventory.findByIdAndUpdate(
+              inventory._id,
+              update,
+              {
+                new: true,
+                session,
+                runValidators: true,
+              },
+            );
+
+            after = Number(inventory.currentStock || 0);
+          } else if (!inventory.itemCode) {
+            // Assign code to matching
+            // legacy item without adding
+            // stock.
+
+            inventory = await Inventory.findByIdAndUpdate(
+              inventory._id,
+              {
+                $set: {
+                  itemCode: row.itemCode,
+                },
+              },
+              {
+                new: true,
+                session,
+                runValidators: true,
+              },
+            );
           }
-
-          inventory = await Inventory.findByIdAndUpdate(inventory._id, update, {
-            new: true,
-            session,
-            runValidators: true,
-          });
-
-          after = Number(inventory.currentStock);
         }
 
-        await Inventory.updateOne(
-          { _id: inventory._id },
-          {
-            $set: {
-              status: stockStatus(after, Number(inventory.minimumStock)),
-            },
-          },
-          { session },
-        );
+        // ==================================
+        // PRESERVE EXISTING CATEGORY
+        // ==================================
 
-        completed.push({
+        const actualCategory = clean(inventory.category) || UNASSIGNED_CATEGORY;
+
+        const displayCategory = /^(other|others)$/i.test(actualCategory)
+          ? clean(inventory.otherCategory) || "Others"
+          : actualCategory;
+
+        // ==================================
+        // UPDATE STOCK STATUS
+        // ==================================
+
+        if (row.quantity > 0) {
+          await Inventory.updateOne(
+            {
+              _id: inventory._id,
+            },
+            {
+              $set: {
+                status: stockStatus(after, Number(inventory.minimumStock || 0)),
+              },
+            },
+            {
+              session,
+            },
+          );
+        }
+
+        const line = {
           inventoryItem: inventory._id,
+
           itemCode: row.itemCode,
-          itemName: row.itemName,
-          category: row.category,
-          unit: row.unit,
+
+          itemName: inventory.itemName || row.itemName,
+
+          category: displayCategory,
+
+          unit: inventory.unit || row.unit,
+
           quantity: row.quantity,
+
           isNewItem,
+
           stockBefore: before,
           stockAfter: after,
-        });
+        };
+
+        completed.push(line);
+
+        // Zero quantity creates a
+        // master record, NOT a
+        // physical stock transaction.
+        if (row.quantity === 0) {
+          continue;
+        }
+
+        receiptItems.push(line);
+
+        // ==================================
+        // STOCK TRANSACTION
+        // ==================================
 
         await StockTransaction.create(
           [
             {
               inventoryItem: inventory._id,
+
               itemCode: row.itemCode,
-              itemName: row.itemName,
-              unit: row.unit,
+
+              itemName: inventory.itemName || row.itemName,
+
+              unit: inventory.unit || row.unit,
+
               type: "INWARD",
+
               quantity: row.quantity,
+
               balanceBefore: before,
+
               balanceAfter: after,
+
               inward: inward._id,
+
               referenceNo: metadata.grnNo,
+
               billNo: metadata.billNo,
+
               vendorName: metadata.vendorName,
+
               transactionDate: metadata.receiptDate,
+
               performedBy: userId,
+
               remarks: metadata.remarks,
             },
           ],
-          { session },
+          {
+            session,
+          },
         );
       }
 
-      inward.items = completed;
-      inward.totalItems = completed.length;
+      // ==================================
+      // SAVE INWARD SUMMARY
+      // ==================================
+
+      inward.items = receiptItems;
+
+      inward.totalItems = receiptItems.length;
+
       inward.totalQuantity = round(
-        completed.reduce((sum, item) => sum + item.quantity, 0),
+        receiptItems.reduce((sum, item) => sum + item.quantity, 0),
       );
 
-      await inward.save({ session });
+      await inward.save({
+        session,
+      });
 
       responseData = {
         inwardNo,
         inwardId: inward._id,
+
         totalRows: completed.length,
+
         newItems: completed.filter((item) => item.isNewItem).length,
-        updatedItems: completed.filter((item) => !item.isNewItem).length,
+
+        updatedItems: completed.filter(
+          (item) => !item.isNewItem && item.quantity > 0,
+        ).length,
+
+        zeroStockMasters: completed.filter(
+          (item) => item.isNewItem && item.quantity === 0,
+        ).length,
+
         totalQuantity: inward.totalQuantity,
+
         items: completed,
       };
     });
@@ -537,6 +709,7 @@ function sendError(res, error) {
   if (error.code === 11000) {
     return res.status(409).json({
       success: false,
+
       message:
         "Duplicate import, Item Code or inward reference detected. Stock addition was not committed.",
     });
@@ -556,6 +729,7 @@ function sendError(res, error) {
   ) {
     return res.status(503).json({
       success: false,
+
       message:
         "Database transactions are not available. Inward was not completed.",
     });
@@ -574,14 +748,22 @@ function sendError(res, error) {
 exports.createManualInward = async (req, res) => {
   try {
     const metadata = getMetadata(req.body);
-    const rows = validateRows(req.body.items);
+
+    const rows = validateRows(req.body.items, {
+      allowZero: false,
+      requireCategory: true,
+    });
 
     const importKey = keyHash(
       JSON.stringify({
         source: "MANUAL",
+
         vendor: metadata.vendorName.toLowerCase(),
+
         bill: metadata.billNo.toLowerCase(),
+
         grn: metadata.grnNo.toLowerCase(),
+
         rows: rows.slice().sort((a, b) => a.itemCode.localeCompare(b.itemCode)),
       }),
     );
@@ -596,7 +778,9 @@ exports.createManualInward = async (req, res) => {
 
     return res.status(201).json({
       success: true,
+
       message: "Stock inward completed successfully",
+
       ...result,
     });
   } catch (error) {
@@ -620,12 +804,12 @@ exports.importExcel = async (req, res) => {
     const metadata = getMetadata(req.body);
 
     const quantityColumn = clean(req.body.quantityColumn) || "Incoming";
+
     const rows = await readExcel(req.file.buffer, quantityColumn);
 
-    // Same exact file cannot be imported again.
-    // Bill metadata is preserved in the record,
-    // but changing the bill number does not
-    // bypass the duplicate-file check.
+    // Duplicate-file safety.
+    // Same exact Excel cannot
+    // be imported twice.
     const importKey = keyHash(req.file.buffer);
 
     const result = await processInward({
@@ -633,14 +817,18 @@ exports.importExcel = async (req, res) => {
       metadata,
       source: "EXCEL",
       importKey,
+
       fileName: req.file.originalname,
+
       quantityColumn,
       userId: req.user._id,
     });
 
     return res.status(201).json({
       success: true,
-      message: "Excel stock imported successfully",
+
+      message: "Excel inventory and stock imported successfully",
+
       ...result,
     });
   } catch (error) {
@@ -652,11 +840,13 @@ exports.importExcel = async (req, res) => {
 // GET /history
 // ==========================================
 
-exports.getInwardHistory = async (req, res) => {
+exports.getInwardHistory = async (_req, res) => {
   try {
     const inward = await StockInward.find()
       .populate("createdBy", "name role")
-      .sort({ createdAt: -1 })
+      .sort({
+        createdAt: -1,
+      })
       .limit(200)
       .lean();
 
@@ -704,13 +894,18 @@ exports.getTransactions = async (req, res) => {
 
     const transactions = await StockTransaction.find(filter)
       .populate("performedBy", "name role")
-      .sort({ transactionDate: -1, createdAt: -1 })
+      .sort({
+        transactionDate: -1,
+        createdAt: -1,
+      })
       .limit(500)
       .lean();
 
     return res.json({
       success: true,
+
       count: transactions.length,
+
       transactions,
     });
   } catch (error) {
