@@ -784,6 +784,18 @@ exports.issueItem = async (req, res) => {
 
 exports.getIssuedItems = async (req, res) => {
   try {
+    // ==========================================
+    // DISABLE API RESPONSE CACHING
+    // ==========================================
+    res.set({
+      "Cache-Control": "private, no-store, no-cache, must-revalidate",
+      Pragma: "no-cache",
+      Expires: "0",
+    });
+
+    // ==========================================
+    // FETCH ALL ISSUED ITEMS
+    // ==========================================
     const issuedItems = await IssuedItem.find()
       .populate("materialRequest", "requestId status materials")
       .populate("complaint", "complaintId title hostel block roomNumber")
@@ -802,6 +814,9 @@ exports.getIssuedItems = async (req, res) => {
       .limit(1000)
       .lean();
 
+    // ==========================================
+    // RECEIVING SUMMARY
+    // ==========================================
     const summary = {
       total: issuedItems.length,
 
@@ -824,6 +839,9 @@ exports.getIssuedItems = async (req, res) => {
       ).length,
     };
 
+    // ==========================================
+    // SEND FRESH RESPONSE
+    // ==========================================
     return res.status(200).json({
       success: true,
       count: issuedItems.length,
