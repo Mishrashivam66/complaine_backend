@@ -650,9 +650,17 @@ exports.issueItem = async (req, res) => {
 
             item: inventory.itemName,
 
-            // Save actual inventory UOM
+            // Category snapshot for historical reports
+            category: inventory.category || "",
+            otherCategory: inventory.otherCategory || "",
+
+            // Use actual inventory unit
             unit: inventory.unit,
 
+            // Quantity approved at the time of this issue
+            approvedQuantity: approved,
+
+            // Quantity physically issued in this voucher
             quantity,
 
             hostel: request.hostel || "",

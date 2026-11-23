@@ -1,6 +1,10 @@
+"use strict";
+
 const mongoose = require("mongoose");
+
 const MaterialRequest = require("../../models/MaterialRequest");
 const Request = require("../../models/Request");
+const IssuedItem = require("../../models/IssuedItem");
 
 // ==========================================
 // COMMON HELPERS
@@ -9,35 +13,67 @@ const Request = require("../../models/Request");
 const isValidId = (id) => mongoose.isValidObjectId(id);
 
 const isPositiveQuantity = (value) =>
-  Number.isFinite(Number(value)) && Number(value) > 0;
+  value !== "" &&
+  value !== null &&
+  value !== undefined &&
+  typeof value !== "boolean" &&
+  Number.isFinite(Number(value)) &&
+  Number(value) > 0;
+
+const isValidPrecision = (value) => {
+  const number = Number(value);
+
+  return (
+    Number.isFinite(number) &&
+    Math.abs(number * 1000 - Math.round(number * 1000)) < 1e-7
+  );
+};
 
 const roundQty = (value) =>
   Math.round((Number(value) + Number.EPSILON) * 1000) / 1000;
+
+// ==========================================
+// CALCULATE OVERALL REQUEST STATUS
+// ==========================================
 
 function calculateRequestStatus(materials) {
   const items = Array.from(materials || []);
 
   const total = items.length;
+
   const issued = items.filter((m) => m.status === "ISSUED").length;
+
   const partialIssued = items.some((m) => m.status === "PARTIALLY_ISSUED");
+
   const approved = items.filter((m) => m.status === "APPROVED").length;
+
   const pending = items.filter((m) => m.status === "PENDING").length;
+
   const rejected = items.filter((m) => m.status === "REJECTED").length;
+
   const outOfStock = items.filter((m) => m.status === "OUT_OF_STOCK").length;
 
   if (!total) return "PENDING";
 
-  if (issued === total) return "ISSUED";
+  if (issued === total) {
+    return "ISSUED";
+  }
 
   if (issued > 0 || partialIssued) {
     return "PARTIALLY_ISSUED";
   }
 
-  if (pending === total) return "PENDING";
+  if (pending === total) {
+    return "PENDING";
+  }
 
-  if (rejected === total) return "REJECTED";
+  if (rejected === total) {
+    return "REJECTED";
+  }
 
-  if (outOfStock === total) return "OUT_OF_STOCK";
+  if (outOfStock === total) {
+    return "OUT_OF_STOCK";
+  }
 
   if (
     pending === 0 &&
@@ -55,25 +91,26 @@ function calculateRequestStatus(materials) {
 // CREATE LEGACY GENERAL STORE REQUEST
 // POST /add
 // ==========================================
-
-// The new complaint workflow must continue
-// using /api/maintenance/material-requests/create.
-// This endpoint is retained only for legacy callers.
+// Complaint material requests continue using
+// the maintenance material-request workflow.
+// ==========================================
 
 exports.createRequest = async (req, res) => {
   try {
-    const { hostel, item, quantity } = req.body;
+    const { hostel, item, quantity } = req.body || {};
 
     if (
       typeof hostel !== "string" ||
       !hostel.trim() ||
       typeof item !== "string" ||
       !item.trim() ||
-      !isPositiveQuantity(quantity)
+      !isPositiveQuantity(quantity) ||
+      !isValidPrecision(quantity)
     ) {
       return res.status(400).json({
         success: false,
-        message: "Valid hostel, item and positive quantity are required",
+        message:
+          "Valid hostel, item and positive quantity with up to three decimal places are required",
       });
     }
 
@@ -157,7 +194,9 @@ exports.getRequests = async (req, res) => {
       .populate("requestedBy", "name role")
       .populate("approvedByStore", "name role")
       .populate("issuedBy", "name role")
-      .sort({ createdAt: -1 })
+      .sort({
+        createdAt: -1,
+      })
       .lean();
 
     if (requestedByRole && requestedByRole !== "ALL") {
@@ -182,7 +221,7 @@ exports.getRequests = async (req, res) => {
 };
 
 // ==========================================
-// UPDATE MATERIAL APPROVAL STATUS
+// APPROVE / EDIT APPROVAL / REJECT
 // PUT /update-material/:requestId/:materialId
 // ==========================================
 
@@ -190,7 +229,11 @@ exports.updateMaterialStatus = async (req, res) => {
   try {
     const { requestId, materialId } = req.params;
 
-    const { status, approvedQuantity, storeRemarks } = req.body;
+    const { status, approvedQuantity, storeRemarks } = req.body || {};
+
+    // --------------------------------------
+    // VALIDATE IDs
+    // --------------------------------------
 
     if (!isValidId(requestId) || !isValidId(materialId)) {
       return res.status(400).json({
@@ -199,7 +242,13 @@ exports.updateMaterialStatus = async (req, res) => {
       });
     }
 
-    if (!["APPROVED", "REJECTED", "OUT_OF_STOCK"].includes(status)) {
+    // --------------------------------------
+    // VALIDATE ACTION
+    // --------------------------------------
+
+    const allowedStatuses = ["APPROVED", "REJECTED", "OUT_OF_STOCK"];
+
+    if (!allowedStatuses.includes(status)) {
       return res.status(400).json({
         success: false,
         message: "Invalid material approval status",
@@ -213,8 +262,10 @@ exports.updateMaterialStatus = async (req, res) => {
       });
     }
 
-    // Use atomic optimistic concurrency to prevent
-    // two Store Managers overwriting each other.
+    // --------------------------------------
+    // OPTIMISTIC CONCURRENCY RETRIES
+    // --------------------------------------
+
     for (let attempt = 0; attempt < 3; attempt++) {
       const request = await MaterialRequest.findById(requestId);
 
@@ -234,12 +285,17 @@ exports.updateMaterialStatus = async (req, res) => {
         });
       }
 
-      // Already-issued material must never be
-      // approved or rejected again.
-      if (
-        Number(material.issuedQuantity || 0) > 0 ||
-        ["ISSUED", "PARTIALLY_ISSUED"].includes(material.status)
-      ) {
+      // ------------------------------------
+      // BLOCK CHANGES AFTER ISSUE
+      // ------------------------------------
+
+      const issuedQuantity = Number(material.issuedQuantity || 0);
+
+      const alreadyIssued =
+        issuedQuantity > 0 ||
+        ["ISSUED", "PARTIALLY_ISSUED"].includes(material.status);
+
+      if (alreadyIssued) {
         return res.status(409).json({
           success: false,
           message:
@@ -247,38 +303,105 @@ exports.updateMaterialStatus = async (req, res) => {
         });
       }
 
+      // Additional verification against the
+      // permanent material issue register.
+      const existingIssue = await IssuedItem.exists({
+        materialRequest: request._id,
+        materialItemId: material._id,
+        status: {
+          $in: ["Issued", "Delivered"],
+        },
+      });
+
+      if (existingIssue) {
+        return res.status(409).json({
+          success: false,
+          message:
+            "A confirmed material issue record already exists. Approval cannot be edited.",
+        });
+      }
+
+      const previousStatus = material.status;
+
+      const previousApprovedQty = Number(material.approvedQuantity || 0);
+
+      // ------------------------------------
+      // APPROVE OR EDIT EXISTING APPROVAL
+      // ------------------------------------
+
       if (status === "APPROVED") {
+        const requestedQuantity = Number(material.quantity);
+
+        // When editing without a new quantity,
+        // preserve the already approved value.
+        const fallbackQuantity =
+          previousStatus === "APPROVED" && previousApprovedQty > 0
+            ? previousApprovedQty
+            : requestedQuantity;
+
         const qty =
           approvedQuantity === undefined ||
           approvedQuantity === null ||
           approvedQuantity === ""
-            ? Number(material.quantity)
+            ? fallbackQuantity
             : Number(approvedQuantity);
 
-        if (!isPositiveQuantity(qty) || qty > Number(material.quantity)) {
+        if (!isPositiveQuantity(qty) || !isValidPrecision(qty)) {
           return res.status(400).json({
             success: false,
             message:
-              "Approved quantity must be greater than zero and cannot exceed requested quantity",
+              "Approved quantity must be positive with at most three decimal places.",
+          });
+        }
+
+        if (!Number.isFinite(requestedQuantity) || qty > requestedQuantity) {
+          return res.status(400).json({
+            success: false,
+            message:
+              "Approved quantity cannot exceed the originally requested quantity.",
           });
         }
 
         material.approvedQuantity = roundQty(qty);
+
         material.status = "APPROVED";
 
         request.approvedByStore = req.user._id;
-        request.approvedAt = new Date();
+
+        // Preserve the existing approval date
+        // when only editing its quantity.
+        if (previousStatus !== "APPROVED" || !request.approvedAt) {
+          request.approvedAt = new Date();
+        }
       } else {
+        // ----------------------------------
+        // REJECT OR MARK OUT OF STOCK
+        // ----------------------------------
+
         material.approvedQuantity = 0;
         material.status = status;
       }
 
-      material.storeRemarks =
-        typeof storeRemarks === "string"
-          ? storeRemarks.trim()
-          : material.storeRemarks || "";
+      // ------------------------------------
+      // REMARKS
+      // ------------------------------------
+
+      if (typeof storeRemarks === "string") {
+        material.storeRemarks = storeRemarks.trim();
+      }
+
+      // ------------------------------------
+      // RECALCULATE REQUEST STATUS
+      // ------------------------------------
 
       request.status = calculateRequestStatus(request.materials);
+
+      // ------------------------------------
+      // ATOMIC VERSION CHECK
+      // ------------------------------------
+      // Competing approval updates must not
+      // silently overwrite one another.
+      // ------------------------------------
 
       const version = request.__v || 0;
 
@@ -295,9 +418,13 @@ exports.updateMaterialStatus = async (req, res) => {
             approvedAt: request.approvedAt,
             updatedAt: new Date(),
           },
-          $inc: { __v: 1 },
+          $inc: {
+            __v: 1,
+          },
         },
-        { runValidators: true },
+        {
+          runValidators: true,
+        },
       );
 
       if (result.modifiedCount === 1) {
@@ -305,18 +432,28 @@ exports.updateMaterialStatus = async (req, res) => {
           .populate("requestedBy", "name role")
           .populate("assignedWorker", "name technicianId role");
 
+        const approvalEdited =
+          status === "APPROVED" && previousStatus === "APPROVED";
+
+        const message = approvalEdited
+          ? "Approved quantity updated successfully"
+          : status === "APPROVED"
+            ? "Material approved successfully"
+            : status === "REJECTED"
+              ? "Material rejected"
+              : "Material marked out of stock";
+
         return res.status(200).json({
           success: true,
-          message:
-            status === "APPROVED"
-              ? "Material approved successfully"
-              : status === "REJECTED"
-                ? "Material rejected"
-                : "Material marked out of stock",
+          message,
           request: updatedRequest,
         });
       }
     }
+
+    // --------------------------------------
+    // CONCURRENT UPDATE FAILED
+    // --------------------------------------
 
     return res.status(409).json({
       success: false,
@@ -324,6 +461,13 @@ exports.updateMaterialStatus = async (req, res) => {
     });
   } catch (error) {
     console.error("UPDATE MATERIAL STATUS:", error);
+
+    if (error.name === "ValidationError") {
+      return res.status(400).json({
+        success: false,
+        message: error.message,
+      });
+    }
 
     return res.status(500).json({
       success: false,
