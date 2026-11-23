@@ -1,3 +1,5 @@
+"use strict";
+
 const mongoose = require("mongoose");
 
 const Inventory = require("../../models/Inventory");
@@ -5,6 +7,7 @@ const MaterialRequest = require("../../models/MaterialRequest");
 const IssuedItem = require("../../models/IssuedItem");
 const StockTransaction = require("../../models/StockTransaction");
 const User = require("../../models/User");
+const IssueVoucherCounter = require("../../models/IssueVoucherCounter");
 
 // ==========================================
 // HELPERS
@@ -27,7 +30,7 @@ const getId = (value) => {
 
 // ==========================================
 // UOM NORMALIZATION
-// FIX: PIECE / PCS / NOS ARE EQUIVALENT
+// PIECE / PCS / NOS ARE EQUIVALENT
 // ==========================================
 
 const normalizeUnit = (value) => {
@@ -39,7 +42,6 @@ const normalizeUnit = (value) => {
   if (!unit) return "";
 
   const equivalentUnits = {
-    // Number of pieces
     piece: "PCS",
     pieces: "PCS",
     pcs: "PCS",
@@ -52,7 +54,6 @@ const normalizeUnit = (value) => {
     unit: "PCS",
     units: "PCS",
 
-    // Weight
     kg: "KG",
     kilogram: "KG",
     kilograms: "KG",
@@ -62,7 +63,6 @@ const normalizeUnit = (value) => {
     gm: "G",
     g: "G",
 
-    // Length
     meter: "M",
     meters: "M",
     metre: "M",
@@ -71,7 +71,6 @@ const normalizeUnit = (value) => {
     mtrs: "M",
     m: "M",
 
-    // Liquid volume
     litre: "L",
     litres: "L",
     liter: "L",
@@ -80,27 +79,20 @@ const normalizeUnit = (value) => {
     ltrs: "L",
     l: "L",
 
-    // Packaging
     box: "BOX",
     boxes: "BOX",
-
     roll: "ROLL",
     rolls: "ROLL",
-
     packet: "PACKET",
     packets: "PACKET",
     pkt: "PACKET",
     pkts: "PACKET",
-
     set: "SET",
     sets: "SET",
-
     pair: "PAIR",
     pairs: "PAIR",
-
     bundle: "BUNDLE",
     bundles: "BUNDLE",
-
     dozen: "DOZEN",
     dz: "DOZEN",
   };
@@ -138,11 +130,34 @@ function stockStatus(quantity, minimum) {
 // ISSUE VOUCHER NUMBER
 // ==========================================
 
-function issueVoucherNumber() {
-  return (
-    `AMI-IV-${Date.now()}-` +
-    Math.random().toString(36).slice(2, 8).toUpperCase()
+async function issueVoucherNumber(session) {
+  const year = Number(
+    new Intl.DateTimeFormat("en-US", {
+      timeZone: "Asia/Kolkata",
+      year: "numeric",
+    }).format(new Date()),
   );
+
+  const counter = await IssueVoucherCounter.findOneAndUpdate(
+    { year },
+    {
+      $inc: {
+        sequence: 1,
+      },
+    },
+    {
+      new: true,
+      upsert: true,
+      setDefaultsOnInsert: true,
+      session,
+    },
+  );
+
+  if (!counter || !Number.isSafeInteger(counter.sequence)) {
+    throw new Error("Could not generate Issue Voucher serial.");
+  }
+
+  return `AMI-IV-${year}-` + String(counter.sequence).padStart(6, "0");
 }
 
 // ==========================================
@@ -254,10 +269,8 @@ async function resolveReceiver({
     fail("Invalid receiver User ID.");
   }
 
-  // If no receiverUserId is provided,
+  // If no receiver ID is supplied,
   // use the assigned Technician.
-  // Never identify a Technician by typed name.
-
   const verifiedId = selectedId || assignedId;
 
   if (!verifiedId || !mongoose.isValidObjectId(verifiedId)) {
@@ -292,17 +305,12 @@ async function resolveReceiver({
     fail("Receiving Technician account has no name.", 409);
   }
 
-  // Ensure the submitted name matches the
-  // verified Technician account.
-
   if (
     receiverName &&
     receiverName.toLowerCase() !== verifiedName.toLowerCase()
   ) {
     fail("Receiver name does not match the selected Technician account.", 409);
   }
-
-  // Validate Technician ID when available.
 
   if (
     technicianId &&
@@ -463,10 +471,9 @@ exports.issueItem = async (req, res) => {
       // INVENTORY MATCH
       // ====================================
 
-      // Prefer exact Item Code when the
-      // material request contains one.
-      // Otherwise match by item name and
-      // reject ambiguous results.
+      // Prefer exact item code if available.
+      // Otherwise match by name.
+      // Reject ambiguous matches.
 
       const requestItemCode = clean(material.itemCode).toUpperCase();
 
@@ -475,12 +482,16 @@ exports.issueItem = async (req, res) => {
       if (requestItemCode) {
         matching = await Inventory.find({
           itemCode: requestItemCode,
-          isActive: { $ne: false },
+          isActive: {
+            $ne: false,
+          },
         }).session(session);
       } else {
         matching = await Inventory.find({
           itemName: material.itemName,
-          isActive: { $ne: false },
+          isActive: {
+            $ne: false,
+          },
         })
           .collation({
             locale: "en",
@@ -502,13 +513,6 @@ exports.issueItem = async (req, res) => {
 
       const inventory = matching[0];
 
-      console.log("ISSUE INVENTORY DEBUG:", {
-        database: mongoose.connection.name,
-        itemName: inventory.itemName,
-        itemCode: inventory.itemCode || "MISSING",
-        inventoryId: String(inventory._id),
-        currentStock: inventory.currentStock,
-      });
       const inventoryItemCode = clean(inventory.itemCode).toUpperCase();
 
       if (!inventoryItemCode) {
@@ -518,8 +522,9 @@ exports.issueItem = async (req, res) => {
           409,
         );
       }
+
       // ====================================
-      // FIXED: UOM NORMALIZATION
+      // UOM NORMALIZATION
       // ====================================
 
       const requestedUnit = normalizeUnit(material.unit);
@@ -532,10 +537,6 @@ exports.issueItem = async (req, res) => {
           409,
         );
       }
-
-      // PIECE = PCS = NOS.
-      // Different units such as KG and PCS
-      // remain incompatible.
 
       // ====================================
       // INVENTORY STOCK CHECK
@@ -557,7 +558,9 @@ exports.issueItem = async (req, res) => {
       const updatedInventory = await Inventory.findOneAndUpdate(
         {
           _id: inventory._id,
-          isActive: { $ne: false },
+          isActive: {
+            $ne: false,
+          },
           currentStock: {
             $gte: quantity,
           },
@@ -597,7 +600,9 @@ exports.issueItem = async (req, res) => {
             ),
           },
         },
-        { session },
+        {
+          session,
+        },
       );
 
       // ====================================
@@ -618,16 +623,18 @@ exports.issueItem = async (req, res) => {
       request.issuedAt = new Date();
 
       // ====================================
-      // GENERATE ISSUE VOUCHER
+      // GENERATE SERIAL ISSUE VOUCHER
       // ====================================
 
-      const voucherNo = issueVoucherNumber();
+      const voucherNo = await issueVoucherNumber(session);
 
       if (!request.storeSlipNo) {
         request.storeSlipNo = voucherNo;
       }
 
-      await request.save({ session });
+      await request.save({
+        session,
+      });
 
       // ====================================
       // CREATE ISSUED ITEM RECORD
@@ -637,37 +644,21 @@ exports.issueItem = async (req, res) => {
         [
           {
             materialRequest: request._id,
-
             materialItemId: material._id,
 
             complaint: request.complaint || null,
-
             jobCard: request.jobCard || null,
 
             inventoryItem: inventory._id,
 
             itemCode: inventoryItemCode,
-
             item: inventory.itemName,
-
-            // Category snapshot for historical reports
-            category: inventory.category || "",
-            otherCategory: inventory.otherCategory || "",
-
-            // Use actual inventory unit
             unit: inventory.unit,
-
-            // Quantity approved at the time of this issue
-            approvedQuantity: approved,
-
-            // Quantity physically issued in this voucher
             quantity,
 
             hostel: request.hostel || "",
-
             block: request.block || "",
 
-            // Verified receiver
             issuedTo: receiver.name,
 
             assignedTechnician: request.assignedWorker || null,
@@ -679,31 +670,22 @@ exports.issueItem = async (req, res) => {
             receiverTechnicianId: receiver.technicianId,
 
             voucherNo,
-
             storeSlipNo: voucherNo,
 
             issuedBy: req.user._id,
-
             issuedDate: new Date(),
 
             status: "Issued",
-
             remarks,
 
-            // Technician confirmation
             receivingStatus: "AWAITING_CONFIRMATION",
 
             receivedQuantity: 0,
-
             shortageQuantity: 0,
-
             receivingConfirmedAt: null,
-
             receivingRemarks: "",
 
-            // Old material retrieval
             retrievalRequired,
-
             expectedRetrievalQty,
 
             retrievedQuantity: 0,
@@ -713,7 +695,9 @@ exports.issueItem = async (req, res) => {
               : "NOT_REQUIRED",
           },
         ],
-        { session },
+        {
+          session,
+        },
       );
 
       // ====================================
@@ -726,21 +710,16 @@ exports.issueItem = async (req, res) => {
             inventoryItem: inventory._id,
 
             itemCode: inventory.itemCode || "",
-
             itemName: inventory.itemName,
-
             unit: inventory.unit,
 
             type: "ISSUE",
-
             quantity,
 
             balanceBefore: before,
-
             balanceAfter: after,
 
             referenceNo: voucherNo,
-
             transactionDate: new Date(),
 
             performedBy: req.user._id,
@@ -752,7 +731,9 @@ exports.issueItem = async (req, res) => {
               remarks,
           },
         ],
-        { session },
+        {
+          session,
+        },
       );
 
       // ====================================
@@ -761,20 +742,15 @@ exports.issueItem = async (req, res) => {
 
       result = {
         issuedItem,
-
         voucherNo,
 
         stockBefore: before,
-
         stockAfter: after,
-
         issuedQuantity: quantity,
 
         receiver: {
           userId: receiver.userId,
-
           name: receiver.name,
-
           technicianId: receiver.technicianId,
         },
 
@@ -788,8 +764,10 @@ exports.issueItem = async (req, res) => {
 
     return res.status(201).json({
       success: true,
+
       message:
         "Material issued successfully. Technician receiving confirmation is pending.",
+
       ...result,
     });
   } catch (error) {
@@ -903,7 +881,6 @@ exports.markDelivered = async (req, res) => {
 // ==========================================
 
 exports.createIssuedItem = exports.issueItem;
-
 exports.getAllIssuedItems = exports.getIssuedItems;
 
 exports.updateIssuedItemStatus = exports.markDelivered;

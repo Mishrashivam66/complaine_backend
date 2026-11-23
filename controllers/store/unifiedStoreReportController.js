@@ -23,16 +23,11 @@ const TYPES = [
 ];
 
 const MAX_ROWS = 10000;
-
 const s = (value) => String(value ?? "").trim();
 const num = (value) => Number(value || 0);
 
 const person = (value) =>
   value && typeof value === "object" ? s(value.name) : s(value);
-
-// ==========================================
-// DATE HELPERS - IST
-// ==========================================
 
 function dtime(value) {
   return value
@@ -117,10 +112,6 @@ const inRange = (field, options) => ({
   },
 });
 
-// ==========================================
-// DATABASE FETCH WITH SAFETY LIMIT
-// ==========================================
-
 async function all(Model, filter, populate = []) {
   const count = await Model.countDocuments(filter);
 
@@ -145,10 +136,6 @@ async function all(Model, filter, populate = []) {
 
   return records;
 }
-
-// ==========================================
-// CATEGORY RESOLUTION
-// ==========================================
 
 function categoryOf(value) {
   const category = s(value?.category);
@@ -180,7 +167,6 @@ function buildInventoryLookup(inventory) {
   }
 
   return (record) => {
-    // Use historical category snapshot if available.
     if (s(record?.category)) {
       return categoryOf(record);
     }
@@ -200,10 +186,6 @@ const matches = (value, selected) =>
   selected.toLowerCase() === "all" ||
   s(value).toLowerCase() === selected.toLowerCase();
 
-// ==========================================
-// REPORT SECTION
-// ==========================================
-
 const section = (name, headers, rows, receiptNo = "") => ({
   name,
   headers,
@@ -211,19 +193,8 @@ const section = (name, headers, rows, receiptNo = "") => ({
   receiptNo,
 });
 
-// ==========================================
-// DAILY SUMMARY RECEIPT NUMBER
-// ==========================================
-// A stable number is generated for each
-// date range and selected category.
-//
-// Electrical -> ELEC
-// Plumbing   -> PLUM
-//
-// Same date and category -> same report number.
-// Different date/category -> different hash.
-// ==========================================
-
+// Same date range and category produce the same
+// Daily Summary receipt number.
 function dailyReceiptNumber(o) {
   const name = s(o.category || "all").toUpperCase();
 
@@ -245,9 +216,9 @@ function dailyReceiptNumber(o) {
   return `AMI-DS-${o.from.replace(/-/g, "")}-` + `${prefix}-${suffix}`;
 }
 
-// ==========================================
-// BUILD COMPLETE REPORT DATA
-// ==========================================
+// ============================================
+// BUILD REPORT DATA
+// ============================================
 
 async function build(o) {
   const want = (kind) =>
@@ -317,40 +288,135 @@ async function build(o) {
     category(item.issuedItem || {}),
   );
 
-  // ========================================
-  // NEW DAILY SUMMARY TABLE
-  // ========================================
-  // Each row represents an issued voucher.
-  // No draft/unconfirmed issue is included.
-  // ========================================
+  // ==========================================
+  // DAILY SUMMARY
+  // ONE ITEM = ONE ROW
+  // ==========================================
 
-  const dailySummaryRows = filteredIssues
-    .filter((item) =>
-      ["Issued", "Delivered"].includes(s(item.status || "Issued")),
-    )
-    .sort((a, b) => new Date(a.issuedDate) - new Date(b.issuedDate))
-    .map((item, index) => {
-      const hostel = s(item.hostel) || s(item.complaint?.hostel);
+  const materialGroups = new Map();
 
-      const block = s(item.block) || s(item.complaint?.block);
+  for (const record of filteredIssues) {
+    const status = s(record.status || "Issued").toLowerCase();
 
-      const location = [hostel, block].filter(Boolean).join(" / ") || "—";
+    if (!["issued", "delivered"].includes(status)) {
+      continue;
+    }
 
-      return [
-        index + 1,
-        s(item.item),
-        s(item.unit) || "Nos",
-        num(item.quantity),
-        s(item.voucherNo) || s(item.storeSlipNo) || "—",
-        location,
-        s(item.issuedTo) || "—",
-        category(item),
-      ];
+    const itemCategory = category(record);
+
+    const code = s(record.itemCode).toUpperCase();
+    const name = s(record.item) || "Unnamed material";
+    const unit = s(record.unit) || "NOS";
+
+    const itemId = String(
+      record.inventoryItem?._id || record.inventoryItem || "",
+    );
+
+    const uniqueItem = code
+      ? `CODE:${code}`
+      : itemId
+        ? `ID:${itemId}`
+        : `NAME:${name.toLowerCase()}`;
+
+    const key = [
+      itemCategory.toLowerCase(),
+      uniqueItem,
+      unit.toLowerCase(),
+    ].join("|");
+
+    if (!materialGroups.has(key)) {
+      materialGroups.set(key, {
+        category: itemCategory,
+        code,
+        name,
+        unit,
+        quantity: 0,
+        locations: new Set(),
+        technicians: new Set(),
+        vouchers: new Map(),
+      });
+    }
+
+    const row = materialGroups.get(key);
+
+    const qty = num(record.quantity);
+
+    if (!Number.isFinite(qty) || qty <= 0) {
+      continue;
+    }
+
+    row.quantity += qty;
+
+    const hostel = s(record.hostel) || s(record.complaint?.hostel);
+
+    const block = s(record.block) || s(record.complaint?.block);
+
+    const location = [hostel, block].filter(Boolean).join(" / ") || "Unknown";
+
+    const technician =
+      s(record.issuedTo) || person(record.assignedTechnician) || "Not recorded";
+
+    row.locations.add(location);
+    row.technicians.add(technician);
+
+    // Preserve each saved voucher number.
+    const voucherNo = s(record.voucherNo) || s(record.storeSlipNo);
+
+    const voucherKey = voucherNo || `MISSING:${record._id}`;
+
+    if (!row.vouchers.has(voucherKey)) {
+      row.vouchers.set(voucherKey, {
+        voucherNo: voucherNo || "Voucher missing",
+        quantity: 0,
+        locations: new Set(),
+        technicians: new Set(),
+        date: record.issuedDate || null,
+      });
+    }
+
+    const voucher = row.vouchers.get(voucherKey);
+
+    voucher.quantity += qty;
+    voucher.locations.add(location);
+    voucher.technicians.add(technician);
+  }
+
+  const formatQty = (value) =>
+    Number(value.toFixed(3)).toLocaleString("en-IN", {
+      maximumFractionDigits: 3,
     });
 
-  // ========================================
-  // EXISTING MATERIAL ISSUE REPORT
-  // ========================================
+  const dailySummaryRows = [...materialGroups.values()]
+    .sort(
+      (a, b) =>
+        a.category.localeCompare(b.category) ||
+        a.name.localeCompare(b.name) ||
+        a.code.localeCompare(b.code),
+    )
+    .map((item, index) => [
+      index + 1,
+      item.code || "—",
+      item.name,
+      item.unit,
+      Number(item.quantity.toFixed(3)),
+
+      [...item.vouchers.values()]
+        .sort((a, b) => new Date(a.date || 0) - new Date(b.date || 0))
+        .map(
+          (voucher) =>
+            `${voucher.voucherNo} ` +
+            `(${formatQty(voucher.quantity)} ${item.unit})`,
+        )
+        .join(", "),
+
+      [...item.locations].join(", "),
+      [...item.technicians].join(", "),
+      item.category,
+    ]);
+
+  // ==========================================
+  // MATERIAL ISSUES
+  // ==========================================
 
   const issueRows = filteredIssues.map((item) => [
     dtime(item.issuedDate),
@@ -358,15 +424,9 @@ async function build(o) {
     item.itemCode,
     item.item,
     item.unit,
-
     item.approvedQuantity == null ? "" : num(item.approvedQuantity),
-
     num(item.quantity),
-
-    // Request-level remaining balance
-    // must be verified independently.
     "",
-
     item.voucherNo || item.storeSlipNo,
     item.hostel || item.block,
     item.issuedTo,
@@ -374,9 +434,9 @@ async function build(o) {
     item.receivingStatus,
   ]);
 
-  // ========================================
-  // EXISTING STOCK INWARD REPORT
-  // ========================================
+  // ==========================================
+  // STOCK INWARD
+  // ==========================================
 
   const inwardRows = inwardLines.map((item) => [
     dtime(item.grn.receiptDate),
@@ -390,9 +450,9 @@ async function build(o) {
     item.grn.billNo,
   ]);
 
-  // ========================================
-  // EXISTING RETRIEVED ITEMS REPORT
-  // ========================================
+  // ==========================================
+  // RETRIEVED ITEMS
+  // ==========================================
 
   const retrievedRows = filteredRetrieved.map((item) => [
     dtime(item.receivedAt),
@@ -406,9 +466,9 @@ async function build(o) {
     item.remarks,
   ]);
 
-  // ========================================
-  // EXISTING STOCK LEDGER REPORT
-  // ========================================
+  // ==========================================
+  // STOCK LEDGER
+  // ==========================================
 
   const ledgerRows = filteredLedger.map((item) => [
     dtime(item.transactionDate),
@@ -423,11 +483,9 @@ async function build(o) {
     item.referenceNo,
   ]);
 
-  // ========================================
-  // EXISTING CURRENT INVENTORY REPORT
-  // ========================================
-  // Current balance is not historical stock.
-  // ========================================
+  // ==========================================
+  // INVENTORY SNAPSHOT
+  // ==========================================
 
   const inventoryRows = filteredInventory.map((item) => [
     categoryOf(item),
@@ -442,9 +500,9 @@ async function build(o) {
     item.status,
   ]);
 
-  // ========================================
-  // EXISTING TECHNICIAN RECEIVING REPORT
-  // ========================================
+  // ==========================================
+  // TECHNICIAN RECEIVING
+  // ==========================================
 
   const receivingRows = filteredReceiving.map((item) => [
     dtime(item.confirmedAt),
@@ -458,11 +516,9 @@ async function build(o) {
     item.technicianRemarks,
   ]);
 
-  // ========================================
-  // ORIGINAL CATEGORY MOVEMENT OVERVIEW
-  // ========================================
-  // Keep different UOM quantities separate.
-  // ========================================
+  // ==========================================
+  // CATEGORY MOVEMENT OVERVIEW
+  // ==========================================
 
   const totals = new Map();
 
@@ -483,7 +539,6 @@ async function build(o) {
     };
 
     previous[metric] += num(quantity);
-
     totals.set(id, previous);
   }
 
@@ -531,20 +586,21 @@ async function build(o) {
       item.retrieved,
     ]);
 
-  // ========================================
-  // ALL REPORT SECTIONS
-  // ========================================
+  // ==========================================
+  // REPORT SECTIONS
+  // ==========================================
 
   const sections = {
     daily: section(
       "Daily Issue Summary",
       [
         "Sr No",
+        "Item Code",
         "Item Name",
         "UOM",
-        "Issued Quantity",
-        "Issue Voucher No",
-        "Location",
+        "Total Issued Qty",
+        "Issue Voucher No (Qty)",
+        "Locations",
         "Worker / Technician",
         "Category",
       ],
@@ -654,8 +710,6 @@ async function build(o) {
       receivingRows,
     ),
 
-    // Original category report retained
-    // inside the Complete Report export.
     categoryOverview: section(
       "Category Movement Overview",
       ["Category", "Material", "UOM", "Stock Inward", "Issued", "Retrieved"],
@@ -675,16 +729,15 @@ async function build(o) {
   };
 }
 
-// ==========================================
+// ============================================
 // EXCEL EXPORT
-// ==========================================
+// ============================================
 
 function addWorksheet(workbook, data, o) {
   const ws = workbook.addWorksheet(data.name.slice(0, 31));
 
   const count = data.headers.length;
 
-  // MAIN TITLE
   ws.mergeCells(1, 1, 1, count);
 
   ws.getCell(1, 1).value = "AMI MAINT. | UNIVERSITY STORE";
@@ -707,11 +760,11 @@ function addWorksheet(workbook, data, o) {
 
   ws.getRow(1).height = 34;
 
-  // DATE, CATEGORY AND RECEIPT NUMBER
   ws.mergeCells(2, 1, 2, count);
 
   ws.getCell(2, 1).value =
-    `${data.name} | ${o.from} to ${o.to} (IST) | Category: ${o.category}` +
+    `${data.name} | ${o.from} to ${o.to} ` +
+    `(IST) | Category: ${o.category}` +
     (data.receiptNo ? `\nReceipt No: ${data.receiptNo}` : "");
 
   ws.getCell(2, 1).font = {
@@ -728,7 +781,6 @@ function addWorksheet(workbook, data, o) {
 
   ws.getRow(2).height = data.receiptNo ? 46 : 28;
 
-  // TABLE HEADERS
   ws.getRow(4).values = data.headers;
   ws.getRow(4).height = 30;
 
@@ -755,13 +807,14 @@ function addWorksheet(workbook, data, o) {
   });
 
   data.headers.forEach((header, index) => {
-    ws.getColumn(index + 1).width = Math.max(
-      17,
-      Math.min(30, header.length + 9),
-    );
+    const dailyWidths = [10, 18, 30, 12, 17, 90, 45, 46, 20];
+
+    ws.getColumn(index + 1).width =
+      data.name === "Daily Issue Summary"
+        ? dailyWidths[index]
+        : Math.max(17, Math.min(30, header.length + 9));
   });
 
-  // REPORT DATA
   for (const values of data.rows) {
     const row = ws.addRow(
       values.map((value) => {
@@ -771,10 +824,28 @@ function addWorksheet(workbook, data, o) {
 
         const text = s(value);
 
-        // Prevent spreadsheet formula injection.
+        // Prevent Excel formula injection.
         return /^[=+\-@\t\r]/.test(text) ? `'${text}` : text;
       }),
     );
+
+    if (data.name === "Daily Issue Summary") {
+      const voucherChars = s(values[5]).length;
+
+      const voucherLines = Math.ceil(voucherChars / 83);
+
+      const locationLines = Math.ceil(s(values[6]).length / 42);
+
+      const technicianLines = Math.ceil(s(values[7]).length / 42);
+
+      row.height = Math.min(
+        409,
+        Math.max(
+          24,
+          15 * Math.max(1, voucherLines, locationLines, technicianLines) + 8,
+        ),
+      );
+    }
 
     row.eachCell((cell) => {
       cell.alignment = {
@@ -793,7 +864,6 @@ function addWorksheet(workbook, data, o) {
     });
   }
 
-  // EXCEL FILTERS
   ws.views = [
     {
       state: "frozen",
@@ -823,39 +893,50 @@ function addWorksheet(workbook, data, o) {
   ws.headerFooter.oddFooter = "AMI MAINT. | University Store | Page &P of &N";
 }
 
-// ==========================================
-// PDF REPORT TABLE
-// ==========================================
+// ============================================
+// PDF EXPORT
+// ============================================
 
 function pdfSection(pdf, data) {
   const left = 24;
   const width = pdf.page.width - left * 2;
 
   const headers = data.headers;
-  const colWidth = width / headers.length;
+
+  const pdfRatios =
+    data.name === "Daily Issue Summary"
+      ? [0.045, 0.09, 0.15, 0.06, 0.075, 0.285, 0.12, 0.125, 0.05]
+      : Array(headers.length).fill(1 / headers.length);
+
+  const columnWidths = pdfRatios.map((ratio) => ratio * width);
+
+  const columnLeft = (index) =>
+    left +
+    columnWidths.slice(0, index).reduce((total, item) => total + item, 0);
 
   const bottom = () => pdf.page.height - 45;
 
   function heading() {
-    // SECTION TITLE
     pdf
       .font("Helvetica-Bold")
       .fillColor("#001B54")
       .fontSize(12)
-      .text(data.name, left, pdf.y + 8, { width });
+      .text(data.name, left, pdf.y + 8, {
+        width,
+      });
 
-    // DAILY RECEIPT NUMBER
     if (data.receiptNo) {
       pdf
         .font("Helvetica")
         .fontSize(9)
         .fillColor("#475569")
-        .text(`Receipt No: ${data.receiptNo}`, left, pdf.y + 2, { width });
+        .text(`Receipt No: ${data.receiptNo}`, left, pdf.y + 2, {
+          width,
+        });
     }
 
     const y = pdf.y + 6;
 
-    // TABLE HEADER BACKGROUND
     pdf.rect(left, y, width, 28).fill("#001B54");
 
     headers.forEach((header, index) => {
@@ -863,8 +944,8 @@ function pdfSection(pdf, data) {
         .font("Helvetica-Bold")
         .fontSize(6.8)
         .fillColor("white")
-        .text(header, left + index * colWidth + 3, y + 4, {
-          width: colWidth - 6,
+        .text(header, columnLeft(index) + 3, y + 4, {
+          width: columnWidths[index] - 6,
           height: 23,
         });
     });
@@ -890,20 +971,17 @@ function pdfSection(pdf, data) {
   }
 
   data.rows.forEach((values, index) => {
-    const row = values.map((value) => s(value).slice(0, 140));
+    const row = values.map((value) => s(value));
 
     pdf.font("Helvetica").fontSize(7);
 
-    const rowHeight = Math.min(
-      100,
-      Math.max(
-        24,
-        ...row.map(
-          (value) =>
-            pdf.heightOfString(value, {
-              width: Math.max(12, colWidth - 6),
-            }) + 8,
-        ),
+    const rowHeight = Math.max(
+      24,
+      ...row.map(
+        (value, column) =>
+          pdf.heightOfString(value, {
+            width: Math.max(12, columnWidths[column] - 6),
+          }) + 8,
       ),
     );
 
@@ -914,10 +992,8 @@ function pdfSection(pdf, data) {
 
     const y = pdf.y;
 
-    // ALTERNATING ROW BACKGROUND
     pdf.rect(left, y, width, rowHeight).fill(index % 2 ? "#F3F6FA" : "#FFFFFF");
 
-    // ROW BORDER
     pdf
       .rect(left, y, width, rowHeight)
       .lineWidth(0.3)
@@ -929,8 +1005,8 @@ function pdfSection(pdf, data) {
         .font("Helvetica")
         .fontSize(7)
         .fillColor("#182A43")
-        .text(value, left + column * colWidth + 3, y + 3, {
-          width: colWidth - 6,
+        .text(value, columnLeft(column) + 3, y + 3, {
+          width: columnWidths[column] - 6,
           height: rowHeight - 5,
         });
     });
@@ -941,57 +1017,54 @@ function pdfSection(pdf, data) {
   pdf.y += 10;
 }
 
-// ==========================================
-// COMPLETE PDF EXPORT
-// ==========================================
-
 function sendPDF(res, report) {
   const o = report.options;
 
   const pdf = new PDFDocument({
     size: "A3",
     layout: "landscape",
-
     margins: {
       top: 28,
       left: 24,
       right: 24,
       bottom: 40,
     },
-
     bufferPages: true,
   });
 
   res.set({
     "Content-Type": "application/pdf",
-    "Content-Disposition": `attachment; filename="AMI_Store_${o.type}_${o.from}_${o.to}.pdf"`,
+
+    "Content-Disposition":
+      `attachment; filename="AMI_Store_` + `${o.type}_${o.from}_${o.to}.pdf"`,
+
     "Cache-Control": "no-store",
   });
 
   pdf.pipe(res);
 
-  // MAIN REPORT HEADER
   pdf
     .font("Helvetica-Bold")
     .fontSize(18)
     .fillColor("#001B54")
-    .text("AMI MAINT. - UNIVERSITY STORE", { align: "center" });
-
-  // SELECTED DATE AND CATEGORY
-  pdf
-    .font("Helvetica")
-    .fontSize(10)
-    .text(`${o.from} to ${o.to} (IST) | Category: ${o.category}`, {
+    .text("AMI MAINT. - UNIVERSITY STORE", {
       align: "center",
     });
 
-  report.selected.forEach((data) => {
-    pdfSection(pdf, data);
-  });
+  pdf
+    .font("Helvetica")
+    .fontSize(10)
+    .text(`${o.from} to ${o.to} (IST) | ` + `Category: ${o.category}`, {
+      align: "center",
+    });
+
+  report.selected.forEach((data) => pdfSection(pdf, data));
 
   const note =
-    "* Pending Qty is blank when a verified request-level balance is unavailable. " +
-    "Inventory section is current stock, not historical closing stock.";
+    "* Pending Qty is blank when a verified " +
+    "request-level balance is unavailable. " +
+    "Inventory section is current stock, " +
+    "not historical closing stock.";
 
   if (pdf.y > pdf.page.height - 110) {
     pdf.addPage();
@@ -999,7 +1072,6 @@ function sendPDF(res, report) {
 
   pdf.font("Helvetica").fontSize(8).fillColor("#555555").text(note);
 
-  // PAGE NUMBERS
   const pageRange = pdf.bufferedPageRange();
 
   for (
@@ -1014,7 +1086,7 @@ function sendPDF(res, report) {
       .fontSize(8)
       .fillColor("#64748B")
       .text(
-        `AMI MAINT. | Page ${page + 1} of ${pageRange.count}`,
+        `AMI MAINT. | Page ${page + 1} ` + `of ${pageRange.count}`,
         24,
         pdf.page.height - 25,
         {
@@ -1029,10 +1101,6 @@ function sendPDF(res, report) {
   pdf.end();
 }
 
-// ==========================================
-// ERROR RESPONSE
-// ==========================================
-
 function errorResponse(res, error) {
   console.error("UNIFIED STORE REPORT:", error);
 
@@ -1046,9 +1114,9 @@ function errorResponse(res, error) {
   });
 }
 
-// ==========================================
-// GET ALL REPORT CATEGORIES
-// ==========================================
+// ============================================
+// REPORT CONTROLLER EXPORTS
+// ============================================
 
 exports.getReportCategories = async (_req, res) => {
   try {
@@ -1069,34 +1137,24 @@ exports.getReportCategories = async (_req, res) => {
   }
 };
 
-// ==========================================
-// GET REPORT PREVIEW
-// ==========================================
-
 exports.getUnifiedPreview = async (req, res) => {
   try {
     const o = options(req);
+
     const report = await build(o);
 
     return res.json({
       success: true,
-
       from: o.from,
       to: o.to,
       category: o.category,
-
       counts: report.counts,
 
       sections: report.selected.map((item) => ({
         name: item.name,
-
-        // Receipt number for frontend preview
         receiptNo: item.receiptNo || "",
-
         headers: item.headers,
         total: item.rows.length,
-
-        // Preview only first 50 rows
         rows: item.rows.slice(0, 50),
       })),
     });
@@ -1104,10 +1162,6 @@ exports.getUnifiedPreview = async (req, res) => {
     return errorResponse(res, error);
   }
 };
-
-// ==========================================
-// EXPORT REPORT AS PDF OR EXCEL
-// ==========================================
 
 exports.exportUnifiedReport = async (req, res) => {
   try {
@@ -1121,19 +1175,15 @@ exports.exportUnifiedReport = async (req, res) => {
 
     const report = await build(o);
 
-    // PDF EXPORT
     if (format === "pdf") {
       return sendPDF(res, report);
     }
 
-    // EXCEL EXPORT
     const workbook = new ExcelJS.Workbook();
 
     workbook.creator = "AMI MAINT.";
 
-    report.selected.forEach((item) => {
-      addWorksheet(workbook, item, o);
-    });
+    report.selected.forEach((item) => addWorksheet(workbook, item, o));
 
     const buffer = await workbook.xlsx.writeBuffer();
 
@@ -1141,7 +1191,9 @@ exports.exportUnifiedReport = async (req, res) => {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 
-      "Content-Disposition": `attachment; filename="AMI_Store_${o.type}_${o.from}_${o.to}.xlsx"`,
+      "Content-Disposition":
+        `attachment; filename="AMI_Store_` +
+        `${o.type}_${o.from}_${o.to}.xlsx"`,
 
       "Cache-Control": "no-store",
     });
