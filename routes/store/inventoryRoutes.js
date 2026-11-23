@@ -25,6 +25,7 @@ const {
   createInventoryCategory,
   renameInventoryCategory,
   deleteInventoryCategory,
+  bulkAssignInventoryCategory,
 } = require("../../controllers/store/inventoryCategoryController");
 
 // ==========================================
@@ -62,6 +63,7 @@ router.put("/categories/rename", renameInventoryCategory);
 // Delete category
 router.delete("/categories/delete", deleteInventoryCategory);
 
+router.put("/categories/bulk-assign", bulkAssignInventoryCategory);
 // ==========================================
 // INVENTORY MANAGEMENT
 // ==========================================

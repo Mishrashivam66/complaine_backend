@@ -390,3 +390,98 @@ exports.deleteInventoryCategory = async (req, res) => {
     }
   }
 };
+
+exports.bulkAssignInventoryCategory = async (req, res) => {
+  let session;
+
+  try {
+    const { itemIds, categoryName } = req.body || {};
+
+    if (
+      !Array.isArray(itemIds) ||
+      itemIds.length === 0 ||
+      itemIds.length > 500
+    ) {
+      fail("Select 1 to 500 inventory items for bulk assignment.");
+    }
+
+    const ids = itemIds.map((id) => String(id).trim());
+
+    if (ids.some((id) => !mongoose.isValidObjectId(id))) {
+      fail("Selection contains an invalid inventory item ID.");
+    }
+
+    const uniqueIds = [...new Set(ids)];
+
+    if (uniqueIds.length !== ids.length) {
+      fail("Duplicate inventory item IDs are not allowed.");
+    }
+
+    const nameKey = categoryKey(categoryName);
+
+    if (!nameKey) {
+      fail("Select a Store Manager-created category.");
+    }
+
+    session = await mongoose.startSession();
+
+    let updatedCount = 0;
+    let finalCategory = "";
+
+    await session.withTransaction(async () => {
+      const savedCategory = await InventoryCategory.findOne({
+        nameKey,
+      }).session(session);
+
+      if (!savedCategory) {
+        fail(
+          "Category is not saved in Category Master. Create it in Add Inventory first.",
+          404,
+        );
+      }
+
+      const matched = await Inventory.countDocuments({
+        _id: { $in: uniqueIds },
+      }).session(session);
+
+      if (matched !== uniqueIds.length) {
+        fail(
+          "Some selected inventory records no longer exist. Refresh and try again.",
+          409,
+        );
+      }
+
+      // Only category fields are updated.
+      // No changes to stock, item codes or GRN history.
+      const result = await Inventory.updateMany(
+        { _id: { $in: uniqueIds } },
+        {
+          $set: {
+            category: "Other",
+            otherCategory: savedCategory.name,
+          },
+        },
+        {
+          session,
+          runValidators: true,
+        },
+      );
+
+      updatedCount = result.matchedCount ?? result.n ?? 0;
+      finalCategory = savedCategory.name;
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: `${updatedCount} material(s) assigned to ${finalCategory}.`,
+      category: finalCategory,
+      updatedCount,
+    });
+  } catch (error) {
+    return errorResponse(res, error);
+  } finally {
+    if (session) {
+      await session.endSession();
+    }
+  }
+};
