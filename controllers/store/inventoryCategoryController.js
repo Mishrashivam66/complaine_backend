@@ -1,95 +1,78 @@
 "use strict";
 
 const mongoose = require("mongoose");
+
 const Inventory = require("../../models/Inventory");
 
-const SYSTEM_CATEGORIES = [
-  "Electrical",
-  "Plumbing",
-  "Hardware",
-  "Carpentry",
-  "Civil",
-  "Painting",
-  "Sanitary",
-  "Mechanical",
-  "General Maintenance",
-];
+const InventoryCategory = require("../../models/InventoryCategory");
+
+// ==========================================
+// HELPERS
+// ==========================================
 
 const clean = (value) =>
   String(value ?? "")
     .trim()
     .replace(/\s+/g, " ");
 
-const canonicalSystem = (name) =>
-  SYSTEM_CATEGORIES.find(
-    (item) => item.toLowerCase() === clean(name).toLowerCase(),
-  );
+const categoryKey = (value) => clean(value).toLowerCase();
 
 const escapeRegex = (value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
-// ==========================================
-// CATEGORY DISPLAY NAME
-// ==========================================
-
-function normalizeCategory(record) {
-  const category = clean(record.category);
-
-  if (/^others?$/i.test(category)) {
-    return clean(record.otherCategory) || "Other";
-  }
-
-  return category || "Uncategorized";
+function fail(message, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  throw error;
 }
 
-// ==========================================
-// MATCH CUSTOM CATEGORY
-// ==========================================
-// Supports both legacy direct categories
-// and "Other" + otherCategory records.
-// ==========================================
+function validateName(value) {
+  const name = clean(value);
 
-function categoryQuery(name) {
-  const rx = new RegExp(`^${escapeRegex(name)}$`, "i");
+  if (
+    name.length < 2 ||
+    name.length > 70 ||
+    /[<>\r\n]/.test(name) ||
+    /^(other|others|uncategorized)$/i.test(name)
+  ) {
+    fail(
+      'Category name must be 2–70 characters and cannot be "Other" or "Uncategorized".',
+    );
+  }
+
+  return name;
+}
+
+// Supports older inventory categories and
+// custom categories stored as:
+//
+// category: "Other"
+// otherCategory: "Electrical"
+
+function inventoryCategoryFilter(name) {
+  const exact = new RegExp(`^${escapeRegex(name)}$`, "i");
 
   return {
     $or: [
       {
-        category: rx,
+        category: exact,
       },
       {
         category: /^others?$/i,
-        otherCategory: rx,
+        otherCategory: exact,
       },
     ],
   };
 }
 
-// ==========================================
-// VALIDATION
-// ==========================================
-
-function validateCustom(name, field) {
-  const value = clean(name);
-
-  if (value.length < 2 || value.length > 70 || /[<>\r\n]/.test(value)) {
-    const error = new Error(`${field} must contain 2 to 70 valid characters.`);
-
-    error.statusCode = 400;
-    throw error;
-  }
-
-  if (/^(other|others|uncategorized)$/i.test(value)) {
-    const error = new Error(`"${value}" cannot be used as a category name.`);
-
-    error.statusCode = 400;
-    throw error;
-  }
-
-  return value;
-}
-
 function errorResponse(res, error) {
-  console.error("STORE CATEGORY MANAGEMENT:", error);
+  console.error("INVENTORY CATEGORY ERROR:", error);
+
+  if (error.code === 11000) {
+    return res.status(409).json({
+      success: false,
+      message: "A category with this name already exists.",
+    });
+  }
 
   return res.status(error.statusCode || 500).json({
     success: false,
@@ -98,57 +81,42 @@ function errorResponse(res, error) {
 }
 
 // ==========================================
-// GET CATEGORY MANAGEMENT DATA
+// GET CATEGORY MANAGEMENT
+// GET /api/store/inventory/category-management
 // ==========================================
 
 exports.getCategoryManagement = async (_req, res) => {
   try {
-    const inventory = await Inventory.find({})
-      .select("category otherCategory isActive")
+    // ONLY categories created in Category Master.
+    // No defaults.
+    // No automatic old Excel categories.
+
+    const masters = await InventoryCategory.find({})
+      .sort({ name: 1 })
+      .select("name createdAt")
       .lean();
 
-    const map = new Map();
+    const categories = await Promise.all(
+      masters.map(async (record) => ({
+        _id: record._id,
 
-    // System categories are permanent.
-    for (const name of SYSTEM_CATEGORIES) {
-      map.set(name.toLowerCase(), {
-        name,
-        materialCount: 0,
-        isSystem: true,
-      });
-    }
+        name: record.name,
 
-    // Derive custom categories from Inventory.
-    for (const item of inventory) {
-      const name = normalizeCategory(item);
+        isSystem: false,
 
-      if (name === "Other" || name === "Uncategorized") {
-        continue;
-      }
+        materialCount: await Inventory.countDocuments(
+          inventoryCategoryFilter(record.name),
+        ),
 
-      const key = name.toLowerCase();
-
-      const record = map.get(key) || {
-        name,
-        materialCount: 0,
-        isSystem: Boolean(canonicalSystem(name)),
-      };
-
-      // Include inactive materials to prevent
-      // deleting a category still referenced
-      // by any inventory record.
-      record.materialCount += 1;
-
-      map.set(key, record);
-    }
-
-    const categories = [...map.values()].sort(
-      (a, b) =>
-        Number(b.isSystem) - Number(a.isSystem) || a.name.localeCompare(b.name),
+        createdAt: record.createdAt,
+      })),
     );
 
-    return res.json({
+    return res.status(200).json({
       success: true,
+
+      source: "CATEGORY_MASTER",
+
       categories,
     });
   } catch (error) {
@@ -157,112 +125,162 @@ exports.getCategoryManagement = async (_req, res) => {
 };
 
 // ==========================================
-// SHARED CATEGORY UPDATE
+// GET CATEGORY NAMES
+// GET /api/store/inventory/categories
 // ==========================================
 
-async function moveCategory(req, res, remove = false) {
+exports.getInventoryCategories = async (_req, res) => {
+  try {
+    const records = await InventoryCategory.find({})
+      .sort({ name: 1 })
+      .select("name")
+      .lean();
+
+    return res.json({
+      success: true,
+
+      source: "CATEGORY_MASTER",
+
+      categories: records.map((record) => record.name),
+    });
+  } catch (error) {
+    return errorResponse(res, error);
+  }
+};
+
+// ==========================================
+// CREATE CATEGORY
+// POST /api/store/inventory/categories
+// ==========================================
+
+exports.createInventoryCategory = async (req, res) => {
+  try {
+    const name = validateName(req.body?.name);
+
+    const nameKey = categoryKey(name);
+
+    const alreadyExists = await InventoryCategory.exists({
+      nameKey,
+    });
+
+    if (alreadyExists) {
+      fail("Category already exists.", 409);
+    }
+
+    const category = await InventoryCategory.create({
+      name,
+
+      nameKey,
+
+      createdBy: req.user?._id || null,
+
+      updatedBy: req.user?._id || null,
+    });
+
+    return res.status(201).json({
+      success: true,
+
+      message: `Category "${name}" created successfully.`,
+
+      category: {
+        _id: category._id,
+
+        name: category.name,
+
+        isSystem: false,
+
+        materialCount: 0,
+      },
+    });
+  } catch (error) {
+    return errorResponse(res, error);
+  }
+};
+
+// ==========================================
+// RENAME CATEGORY
+// PUT /api/store/inventory/categories/rename
+// ==========================================
+
+exports.renameInventoryCategory = async (req, res) => {
   let session;
 
   try {
-    const oldName = validateCustom(req.body?.oldName, "Old category");
+    const oldName = validateName(req.body?.oldName);
 
-    const targetName = validateCustom(
-      remove ? req.body?.replacementCategory : req.body?.newName,
-      remove ? "Replacement category" : "New category",
-    );
+    const newName = validateName(req.body?.newName);
 
-    // Never rename or delete system categories.
-    if (canonicalSystem(oldName)) {
-      const error = new Error(
-        "System categories cannot be renamed or deleted.",
-      );
+    const oldKey = categoryKey(oldName);
+    const newKey = categoryKey(newName);
 
-      error.statusCode = 403;
-      throw error;
+    if (oldName === newName) {
+      fail("Enter a different category name.");
     }
-
-    if (
-      oldName.toLowerCase() === targetName.toLowerCase() &&
-      oldName === targetName
-    ) {
-      const error = new Error("Select a different category name.");
-
-      error.statusCode = 400;
-      throw error;
-    }
-
-    // Delete is actually a safe reassignment.
-    // The destination must already exist.
-    const existing = await Inventory.find({})
-      .select("category otherCategory")
-      .lean();
-
-    const destinationExists =
-      existing.some(
-        (item) =>
-          normalizeCategory(item).toLowerCase() === targetName.toLowerCase(),
-      ) || Boolean(canonicalSystem(targetName));
-
-    if (remove && !destinationExists) {
-      const error = new Error("Replacement category must already exist.");
-
-      error.statusCode = 400;
-      throw error;
-    }
-
-    const canonicalTarget = canonicalSystem(targetName);
-
-    const newFields = canonicalTarget
-      ? {
-          category: canonicalTarget,
-          otherCategory: "",
-        }
-      : {
-          category: "Other",
-          otherCategory: targetName,
-        };
-
-    // ======================================
-    // DATABASE TRANSACTION
-    // ======================================
 
     session = await mongoose.startSession();
 
-    let movedCount = 0;
+    let updatedCount = 0;
 
     await session.withTransaction(async () => {
-      const update = await Inventory.updateMany(
-        categoryQuery(oldName),
+      const oldCategory = await InventoryCategory.findOne({
+        nameKey: oldKey,
+      }).session(session);
+
+      if (!oldCategory) {
+        fail("Category not found in Category Master.", 404);
+      }
+
+      if (oldKey !== newKey) {
+        const conflict = await InventoryCategory.exists({
+          nameKey: newKey,
+        }).session(session);
+
+        if (conflict) {
+          fail("Category name already exists.", 409);
+        }
+      }
+
+      // Rename all linked inventory items.
+      // Stock quantities are not changed.
+
+      const result = await Inventory.updateMany(
+        inventoryCategoryFilter(oldCategory.name),
+
         {
-          $set: newFields,
+          $set: {
+            category: "Other",
+            otherCategory: newName,
+          },
         },
+
         {
           session,
+          runValidators: true,
         },
       );
 
-      movedCount = update.matchedCount;
+      updatedCount = result.matchedCount ?? result.n ?? 0;
 
-      if (!movedCount) {
-        const error = new Error(
-          "Category is no longer assigned to any inventory materials.",
-        );
+      oldCategory.name = newName;
+      oldCategory.nameKey = newKey;
 
-        error.statusCode = 404;
-        throw error;
-      }
+      oldCategory.updatedBy = req.user?._id || null;
+
+      await oldCategory.save({
+        session,
+      });
     });
 
     return res.json({
       success: true,
 
-      message: remove
-        ? `Category removed. ${movedCount} material(s) reassigned to ${targetName}.`
-        : `Category updated. ${movedCount} material(s) now use ${targetName}.`,
+      message:
+        `Category renamed to "${newName}". ` +
+        `${updatedCount} material(s) updated.`,
 
-      updatedCount: movedCount,
+      category: newName,
 
-      category: canonicalTarget || targetName,
+      updatedCount,
     });
   } catch (error) {
     return errorResponse(res, error);
@@ -271,16 +289,104 @@ async function moveCategory(req, res, remove = false) {
       await session.endSession();
     }
   }
-}
+};
 
 // ==========================================
-// RENAME CATEGORY
+// DELETE CATEGORY
+// DELETE /api/store/inventory/categories/delete
 // ==========================================
 
-exports.renameInventoryCategory = (req, res) => moveCategory(req, res, false);
+exports.deleteInventoryCategory = async (req, res) => {
+  let session;
 
-// ==========================================
-// DELETE CATEGORY WITH REASSIGNMENT
-// ==========================================
+  try {
+    const oldName = validateName(req.body?.oldName);
 
-exports.deleteInventoryCategory = (req, res) => moveCategory(req, res, true);
+    const replacementInput = clean(req.body?.replacementCategory);
+
+    const oldKey = categoryKey(oldName);
+
+    session = await mongoose.startSession();
+
+    let movedCount = 0;
+
+    await session.withTransaction(async () => {
+      const oldCategory = await InventoryCategory.findOne({
+        nameKey: oldKey,
+      }).session(session);
+
+      if (!oldCategory) {
+        fail("Category not found in Category Master.", 404);
+      }
+
+      const filter = inventoryCategoryFilter(oldCategory.name);
+
+      const linkedCount =
+        await Inventory.countDocuments(filter).session(session);
+
+      // If category has materials,
+      // move them to another saved category.
+
+      if (linkedCount > 0) {
+        const replacementName = validateName(replacementInput);
+
+        if (categoryKey(replacementName) === oldKey) {
+          fail("Choose a different replacement category.");
+        }
+
+        const replacement = await InventoryCategory.findOne({
+          nameKey: categoryKey(replacementName),
+        }).session(session);
+
+        if (!replacement) {
+          fail(
+            "Choose an existing Store Manager-created replacement category.",
+          );
+        }
+
+        const update = await Inventory.updateMany(
+          filter,
+
+          {
+            $set: {
+              category: "Other",
+
+              otherCategory: replacement.name,
+            },
+          },
+
+          {
+            session,
+            runValidators: true,
+          },
+        );
+
+        movedCount = update.matchedCount ?? update.n ?? 0;
+      }
+
+      // Remove only Category Master record.
+      // Never delete inventory or stock history.
+
+      await InventoryCategory.deleteOne({
+        _id: oldCategory._id,
+      }).session(session);
+    });
+
+    return res.json({
+      success: true,
+
+      message:
+        movedCount > 0
+          ? `Category removed. ${movedCount} material(s) safely reassigned.`
+          : "Empty category removed successfully.",
+
+      updatedCount: movedCount,
+    });
+  } catch (error) {
+    return errorResponse(res, error);
+  } finally {
+    if (session) {
+      await session.endSession();
+    }
+  }
+};
